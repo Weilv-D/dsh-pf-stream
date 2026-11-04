@@ -1,0 +1,15 @@
+# Research artifacts (local-only)
+research/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Test fixtures (generated, fingerprint-cached)
+test/fixtures/media/
+
+# Logs & OS
+*.log
+.DS_Store
+Thumbs.db
