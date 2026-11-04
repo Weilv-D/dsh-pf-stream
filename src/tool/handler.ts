@@ -5,18 +5,10 @@
  * probe_only 映射为 action="probe"；未声明 action 时默认 pf_stream。
  */
 
-import type { IntentDirective, LegacyInspectionParams } from '../types.js';
+import type { IntentDirective, LegacyInspectionParams, ProbeResult } from '../types.js';
+import { PfStreamError } from '../errors.js';
 
-/** 插件参数化错误码命名空间：PFSTREAM_<模块>_<原因>。 */
-export class PfStreamError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'PfStreamError';
-  }
-}
+export { PfStreamError } from '../errors.js';
 
 export interface ToolCallArgs {
   video_path: string;
@@ -30,13 +22,28 @@ export interface ToolExec {
 
 export type ToolResult = Record<string, unknown>;
 
+/** probe 通道实现，由插件入口注入（便于测试替换）。 */
+export type ProbeFn = (videoPath: string, signal: AbortSignal | undefined) => Promise<ProbeResult>;
+
+export interface ToolDeps {
+  probe: ProbeFn;
+}
+
 export function resolveAction(args: ToolCallArgs): NonNullable<IntentDirective['action']> {
   if (args.intent?.action) return args.intent.action;
   if (args.intent?.probe_only === true || args.probe_only === true) return 'probe';
   return 'pf_stream';
 }
 
-export async function handleToolCall(args: ToolCallArgs, _exec: ToolExec | undefined): Promise<ToolResult> {
+export async function handleToolCall(
+  args: ToolCallArgs,
+  exec: ToolExec | undefined,
+  deps: ToolDeps,
+): Promise<ToolResult> {
   const action = resolveAction(args);
+  if (action === 'probe') {
+    const probeResult = await deps.probe(args.video_path, exec?.signal);
+    return { action: 'probe', probe: probeResult };
+  }
   throw new PfStreamError('PFSTREAM_ACTION_UNAVAILABLE', `action '${action}' 通道不可用`);
 }

@@ -11,8 +11,10 @@
 import Schema from '@deepseek-ai/schemastery';
 import type { Context } from '@deepseek-ai/cordis';
 import type { PfStreamPluginConfig } from './types.js';
-import { handleToolCall, type ToolCallArgs, type ToolExec, type ToolResult } from './tool/handler.js';
+import { handleToolCall, type ProbeFn, type ToolCallArgs, type ToolExec, type ToolResult } from './tool/handler.js';
 import { TOOL_NAME, TOOL_DESCRIPTION, toolOutputSchema, toolParameters } from './tool/schema.js';
+import { probeVideo } from './stage0/probe.js';
+import { resolveBinPaths } from './utils/ffmpegBin.js';
 
 export const name = 'dsh-pf-stream';
 
@@ -58,6 +60,10 @@ export interface ToolsService {
 export type HostContext = Context & { tools: ToolsService };
 
 export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamPluginConfig }) {
+  const { config } = _deps;
+  const bins = resolveBinPaths({ ffmpegPath: config.ffmpegPath, ffprobePath: config.ffprobePath });
+  const probe: ProbeFn = (videoPath, signal) =>
+    probeVideo(videoPath, { ffprobePath: bins.ffprobe, signal });
   return {
     name: TOOL_NAME,
     description: TOOL_DESCRIPTION,
@@ -74,7 +80,7 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
     // 会话级状态使并发不安全。
     isConcurrencySafe: () => false,
     async execute(args: ToolCallArgs, exec: ToolExec | undefined): Promise<ToolResult> {
-      return handleToolCall(args, exec);
+      return handleToolCall(args, exec, { probe });
     },
   };
 }
