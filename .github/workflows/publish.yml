@@ -4,17 +4,66 @@ on:
   release:
     types: [published]
 
-permissions:
-  id-token: write
-  contents: read
+permissions: {}
 
 concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  publish:
-    runs-on: ubuntu-latest
+  guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: 检出代码（全量历史）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 版本一致性守卫（tag = v{version}，正式版本号）
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::tag $TAG 与 package.json 版本 $VERSION 不一致"
+            exit 1
+          fi
+          case "$VERSION" in
+            *-*)
+              echo "::error::版本号 $VERSION 含预发布后缀。正式发布通道只接受正式版本号；预发布走本地 npm publish --tag next"
+              exit 1
+              ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Release 类型守卫（非 draft、非 prerelease）
+        run: |
+          DRAFT="${{ github.event.release.draft }}"
+          PRE="${{ github.event.release.prerelease }}"
+          if [ "$DRAFT" = "true" ] || [ "$PRE" = "true" ]; then
+            echo "::error::draft 或 prerelease 标记的 Release 不进入自动发布"
+            exit 1
+          fi
+
+      - name: tag 提交位于 main 历史守卫
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag 提交 $GITHUB_SHA 不在 main 历史内。Release 目标必须为 main 上的升版提交"
+            exit 1
+          fi
+
+  build:
+    needs: guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -24,6 +73,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
 
       - name: 安装 pnpm
         uses: pnpm/action-setup@v4
@@ -34,16 +84,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
-
-      - name: 版本一致性守卫
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          PKG="$(node -p "require('./package.json').version")"
-          if [ "$TAG" != "v$PKG" ]; then
-            echo "::error::tag $TAG 与 package.json 版本 $PKG 不一致"
-            exit 1
-          fi
 
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
@@ -51,14 +91,76 @@ jobs:
       - name: 构建
         run: pnpm run build
 
+      - name: 包内容白名单审计
+        run: node scripts/check-package.mjs
+
+      - name: 打包 tarball（发布物唯一来源）
+        run: |
+          mkdir -p pkg
+          npm pack --pack-destination pkg
+          ls -l pkg/
+
+      - name: 上传 tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: pkg/*.tgz
+          if-no-files-found: error
+
       - name: 测试（含 e2e）
         run: pnpm test
 
       - name: 宿主契约自检
         run: pnpm verify:host
 
-      - name: 升级 npm 以支持 OIDC 发布
-        run: npm install -g npm@latest
+  publish:
+    needs: [guard, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: 检出代码（provenance 上下文）
+        uses: actions/checkout@v4
 
-      - name: 发布（Trusted Publishing + provenance）
-        run: npm publish --provenance
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: 升级 npm 至 11（OIDC 发布）
+        run: npm install -g npm@11
+
+      - name: 下载 tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: pkg
+
+      - name: 发布 tarball（Trusted Publishing + provenance）
+        run: npm publish "pkg/dsh-pf-stream-${{ needs.guard.outputs.version }}.tgz" --provenance
+
+      - name: 发布后验证
+        run: |
+          VERSION="${{ needs.guard.outputs.version }}"
+          sleep 15
+          CHECK="$(npm view "dsh-pf-stream@$VERSION" version 2>/dev/null || true)"
+          if [ -z "$CHECK" ] || [ "$CHECK" != "$VERSION" ]; then
+            echo "::error::npm view dsh-pf-stream@$VERSION 未命中该精确版本（返回：$CHECK）"
+            exit 1
+          fi
+          LATEST="$(npm view dsh-pf-stream dist-tags.latest)"
+          if [ "$LATEST" != "$VERSION" ]; then
+            echo "::error::dist-tags.latest = $LATEST，应为 $VERSION"
+            exit 1
+          fi
+          ATT="$(npm view "dsh-pf-stream@$VERSION" attestations --json 2>/dev/null || true)"
+          if [ -z "$ATT" ] || [ "$ATT" = "null" ]; then
+            echo "::error::provenance attestations 缺失"
+            exit 1
+          fi
+          echo "版本命中：dsh-pf-stream@$VERSION"
+          echo "latest 指向：$VERSION"
+          echo "attestations：$ATT"
