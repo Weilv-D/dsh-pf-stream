@@ -96,6 +96,10 @@ pnpm run build   # TypeScript 编译
 pnpm verify:host # 宿主契约自检（Schema 形状/关键字子集/依赖边界）
 ```
 
+## 发布
+
+npm 发布走 GitHub Actions Trusted Publishing（OIDC，零 token）。打 tag 并发布 GitHub Release 即自动触发：门禁三连（build / test / verify:host）全绿后 `npm publish --provenance`。流程与版本策略见 [docs/发布规范.md](docs/发布规范.md)。
+
 ## 许可证
 
 Apache-2.0。

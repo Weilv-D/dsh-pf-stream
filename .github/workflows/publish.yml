@@ -1,0 +1,58 @@
+name: publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: 版本一致性守卫
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "v$PKG" ]; then
+            echo "::error::tag $TAG 与 package.json 版本 $PKG 不一致"
+            exit 1
+          fi
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建
+        run: pnpm run build
+
+      - name: 测试（含 e2e，runner 自带 ffmpeg）
+        run: pnpm test
+
+      - name: 宿主契约自检
+        run: pnpm verify:host
+
+      - name: 升级 npm 以支持 OIDC 发布
+        run: npm install -g npm@latest
+
+      - name: 发布（Trusted Publishing + provenance）
+        run: npm publish --provenance
