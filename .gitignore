@@ -1,6 +1,10 @@
 # Research artifacts (local-only)
 research/
 
+# Internal design & handover docs (local-only)
+docs/dsh-pf-stream 技术设计方案.md
+docs/开发交接.md
+
 # Node
 node_modules/
 lib/
