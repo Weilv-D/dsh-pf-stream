@@ -64,9 +64,6 @@ export class SchmittMachine {
       gEma: this.gEma,
       emaWarmupLeft: this.emaWarmupLeft,
       settleStartPtsMs: this.settleStartPtsMs,
-      lastKCandidates: null,
-      lastMotionVec: null,
-      arena: null,
     };
   }
 

@@ -86,7 +86,9 @@ describe('三通道共享 Stage 4 打包契约（用例 17）', () => {
     expect(planGroups(ts, 'balanced', false).map((g) => g.form)).toEqual(['FORM_1_STANDARD_STRIP', 'FORM_3_COMPACT_1F']);
     expect(planGroups([0, 100], 'balanced', false)[0]!.form).toBe('FORM_4_PARTIAL_STRIP');
     expect(planGroups([0], 'balanced', false)[0]!.form).toBe('FORM_3_COMPACT_1F');
-    expect(planGroups(ts, 'motion', false).map((g) => g.form)).toEqual(['FORM_2_COMPACT_4P', 'FORM_2_COMPACT_4P']);
+    // focus=motion 只组满 4 帧的 FORM_2（末组余量 2 帧不组包，避免非法 4P 断言）
+    expect(planGroups(ts, 'motion', false).map((g) => g.form)).toEqual(['FORM_2_COMPACT_4P']);
+    expect(planGroups(ts, 'motion', false)[0]!.pCount).toBe(4);
     expect(planGroups(ts, 'detail', false).every((g) => g.form === 'FORM_3_COMPACT_1F')).toBe(true);
     expect(planGroups(ts, 'balanced', true).every((g) => g.form === 'FORM_3_COMPACT_1F')).toBe(true);
 

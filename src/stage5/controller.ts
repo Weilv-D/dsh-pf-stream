@@ -19,7 +19,7 @@ export const R3_FLIP_RECOVER_FRAMES = 10; // r_flip≤0.6 持续满 10 帧
 export const R4_SETTLE_MS = 80;
 const TICK_LOG_LIMIT = 96;
 const D_HIST_WINDOW_MS = 500;
-const D_HIST_MIN_SAMPLES = 5;
+const D_HIST_MIN_SAMPLES = 3;
 
 type RuleKey = 'r1' | 'r2' | 'r3' | 'r4';
 

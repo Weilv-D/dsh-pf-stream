@@ -2,7 +2,7 @@
  * 契约 1/2/4 —— 视窗归一化（显示坐标系）。
  *
  * 规则（《四、采样逻辑…》§3 与契约 4 四步归一化）：
- * - roi_hint 或运动质心 → 1:1 正方形视窗（边长 = min(源短边, 包络目标区) 向下取整到 42 倍数，硬下限 84），
+ * - roi_hint 或运动质心 → 1:1 正方形视窗（边长 = min(源短边向下取整, 包络目标区向上取整) 的 42 倍数，硬下限 84），
  *   缩放后 100% 填满槽位，零灰边；
  * - 全局/ full_frame → 等比内接 + 内容宽高量化到 42 倍数，居中灰补边（偏置对齐 42 网格）；
  * - 短边 ≥84 为硬约束（面积预算为软约束）；
@@ -40,6 +40,10 @@ export function quant42Floor(v: number): number {
 
 export function quant42Round(v: number): number {
   return Math.floor(v / SUPERPIXEL + 0.5) * SUPERPIXEL;
+}
+
+export function quant42Ceil(v: number): number {
+  return Math.ceil(v / SUPERPIXEL) * SUPERPIXEL;
 }
 
 export function slotSize(slot: SlotKind): number {
@@ -92,8 +96,9 @@ export function roiToPixels(
 function planSquareViewport(input: ViewportInput, slot: number, shortSide: number): ViewportPlan {
   const roi = roiToPixels(input.roi!, input.displayWidth, input.displayHeight);
   const envelope = Math.max(roi.w, roi.h);
-  // 边长：min(源短边, 包络目标区)，向下取整 42 倍数；硬下限 84（源域外扩优先）。
-  let side = quant42Floor(Math.min(shortSide, envelope));
+  // 边长：源短边向下取整（不越源界）与包络目标区向上取整（不裁目标）取小；
+  // 硬下限 84（源域外扩优先）。
+  let side = Math.min(quant42Floor(shortSide), quant42Ceil(envelope));
   let padOverflow = false;
   let pad = { top: 0, bottom: 0, left: 0, right: 0 };
   if (side < MIN_SHORT_SIDE) {

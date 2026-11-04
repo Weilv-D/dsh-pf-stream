@@ -137,13 +137,16 @@ describe('case20: Epoch Compaction', () => {
     const s2 = await runStreamCallFixture('case14_slow.mp4', 'case20-hash', {}, { defaultStreamWindowMs: 1300 });
     const s3 = await runStreamCallFixture('case14_slow.mp4', 'case20-hash', {}, { defaultStreamWindowMs: 1300 });
 
-    // 源包登记：anchorFId → contentHash
+    // 源包登记：anchorFId → contentHash（冷区引用自身也携带 contentHash，
+    // 被收编包的条带不再输出，一致性对所有含锚点发射生效）
     const hashAtFirst = new Map<number, string>();
     for (const call of [s1, s2, s3]) {
       for (const a of call.packets) {
-        if (a.packet.historyMode !== 'anchor_only_ref' && a.anchorFContentHash) {
-          if (!hashAtFirst.has(a.packet.anchorFId!)) {
-            hashAtFirst.set(a.packet.anchorFId!, a.anchorFContentHash);
+        if (a.anchorFContentHash && a.packet.anchorFId !== null) {
+          if (!hashAtFirst.has(a.packet.anchorFId)) {
+            hashAtFirst.set(a.packet.anchorFId, a.anchorFContentHash);
+          } else {
+            expect(a.anchorFContentHash).toBe(hashAtFirst.get(a.packet.anchorFId));
           }
         }
       }

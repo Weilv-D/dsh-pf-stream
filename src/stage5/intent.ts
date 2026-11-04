@@ -84,18 +84,33 @@ export function mergeSessionIntent(
   defaults: { mode: DensityMode; focus: FocusBias },
 ): SessionIntent {
   if (!intent) return current;
+  // reset 先行（规格《五》§1.3：重置后合并本次新字段），
+  // 再按字段级合并覆盖，保证 {reset:true, mode:'dense'} 不丢 dense。
+  const base: SessionIntent = intent.reset
+    ? {
+        intentId: current.intentId,
+        mode: defaults.mode,
+        focus: defaults.focus,
+        fullFrame: false,
+      }
+    : current;
   const next: SessionIntent = {
-    ...current,
-    mode: intent.mode ?? current.mode,
-    focus: intent.focus ?? current.focus,
-    fullFrame: intent.full_frame ?? current.fullFrame,
+    ...base,
+    mode: intent.mode ?? base.mode,
+    focus: intent.focus ?? base.focus,
+    fullFrame: intent.full_frame ?? base.fullFrame,
   };
-  if (intent.reset) {
-    next.mode = defaults.mode;
-    next.focus = defaults.focus;
-    next.roiHint = undefined;
-    next.fullFrame = false;
-  }
   if (intent.roi_hint) next.roiHint = intent.roi_hint;
+  else if (intent.reset) next.roiHint = undefined;
   return next;
+}
+
+/** 会话意图是否发生变化（用于 intentId 递增判定）。 */
+export function sessionIntentChanged(a: SessionIntent, b: SessionIntent): boolean {
+  return (
+    a.mode !== b.mode ||
+    a.focus !== b.focus ||
+    a.fullFrame !== b.fullFrame ||
+    JSON.stringify(a.roiHint ?? null) !== JSON.stringify(b.roiHint ?? null)
+  );
 }

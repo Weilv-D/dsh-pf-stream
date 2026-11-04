@@ -18,6 +18,8 @@ import { execFile } from './ffmpeg.js';
 
 export interface DecodePointOptions {
   ffmpegPath: string;
+  /** ffprobe 路径（缺省时由 ffmpegPath 同目录派生）。 */
+  ffprobePath?: string | undefined;
   displayWidth: number;
   displayHeight: number;
   signal?: AbortSignal | undefined;
@@ -48,7 +50,8 @@ export async function decodePoint(
     encoding: 'buffer',
   });
   const frameBytes = options.displayWidth * options.displayHeight * 3;
-  if (stdout.length === 0) return null;
+  // 截断帧（0 < 长度 < frameBytes）按空帧处理，交由回退链兜底。
+  if (stdout.length < frameBytes) return null;
   return { width: options.displayWidth, height: options.displayHeight, data: stdout.subarray(0, frameBytes) };
 }
 
@@ -136,8 +139,9 @@ async function probePtsIndexExec(
   w0: number,
   w1: number,
 ): Promise<PtsIndexEntry[]> {
-  // ffprobe 路径与 ffmpeg 同目录约定：入口适配层保证成对解析
-  const ffprobe = options.ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
+  // ffprobe 显式配置优先；缺省时按与 ffmpeg 同目录约定派生
+  const ffprobe = options.ffprobePath
+    ?? options.ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
   return probePtsIndex(ffprobe, videoPath, w0, w1, options.signal);
 }
 
@@ -221,6 +225,16 @@ export async function decodeRangeStreaming(
   let realigned = 0;
   let killed = false;
   let indexExhausted = false;
+  // 墙钟 30s 无帧推进告警（规格《六》§1）：解码器长时间无输出即终止并报错。
+  const STALL_TIMEOUT_MS = 30_000;
+  let lastFrameWallMs = Date.now();
+  let stalled = false;
+  const stallTimer = setInterval(() => {
+    if (Date.now() - lastFrameWallMs > STALL_TIMEOUT_MS) {
+      stalled = true;
+      child.kill();
+    }
+  }, 1_000);
 
   const exited = new Promise<number | null>((resolveExit, rejectExit) => {
     child.once('error', rejectExit);
@@ -241,7 +255,9 @@ export async function decodeRangeStreaming(
           height: geometry.outH,
           data: pending.subarray(0, frameBytes),
         };
+        lastFrameWallMs = Date.now();
         await onFrame(image, index[frameIndex]!.ptsMs);
+        lastFrameWallMs = Date.now();
         pending = pending.length > frameBytes ? pending.subarray(frameBytes) : null;
         frameIndex++;
       }
@@ -256,6 +272,8 @@ export async function decodeRangeStreaming(
     killed = true;
     child.kill();
     throw error;
+  } finally {
+    clearInterval(stallTimer);
   }
 
   if (options.signal?.aborted && !killed) {
@@ -265,6 +283,12 @@ export async function decodeRangeStreaming(
   }
 
   const code = await exited;
+  if (stalled) {
+    throw new PfStreamError(
+      'PFSTREAM_DECODE_STALL',
+      `解码连续 ${STALL_TIMEOUT_MS}ms 无帧推进，已终止（可能为损坏媒体或解码器阻塞）`,
+    );
+  }
   if (code !== 0 && !killed) {
     const stderrTail = Buffer.concat(stderrChunks)
       .subarray(Math.max(0, stderrBytes - 2048))

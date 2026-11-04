@@ -3,7 +3,8 @@
  *
  * 输入便利层：start_time/end_time/time_range/timestamps/fps/interval/num_frames/
  * frame_count/crop/bbox/roi/probe_only → 标准 IntentDirective 字段。
- * 判秒规则：数值 ≤ 时长（秒）×1.5 判秒，超过判毫秒；归一化来源记入 normalizedFrom。
+ * 判秒规则（《技术设计方案》§2.4）：无后缀数值 ≤ 时长（秒）×2 判秒，超过判毫秒；
+ * 归一化来源记入 normalizedFrom。
  */
 
 import type { IntentDirective, RoiHint } from '../types.js';
@@ -18,24 +19,38 @@ export interface NormalizedIntent {
 export function toMs(value: number | string, durationMs: number): number {
   const n = typeof value === 'string' ? Number.parseFloat(value) : value;
   if (!Number.isFinite(n)) throw new Error(`时间值无法解析：${String(value)}`);
-  const secThreshold = (durationMs / 1000) * 1.5;
+  const secThreshold = (durationMs / 1000) * 2;
   const ms = n <= secThreshold ? n * 1000 : n;
   return Math.round(ms);
 }
 
-function normalizeRoi(raw: { x: number; y: number; w: number; h: number }): RoiHint {
+/**
+ * ROI 归一化：归一化坐标直接钳制 [0,1]；像素坐标（任一分量 >1）
+ * 按显示宽高换算为归一化坐标（规格《五》§1.1 crop/bbox/roi 规则）。
+ */
+function normalizeRoi(
+  raw: { x: number; y: number; w: number; h: number },
+  displayWidth: number,
+  displayHeight: number,
+): RoiHint {
   const clamp01 = (v: number) => Math.min(Math.max(v, 0), 1);
+  const pixelMode = raw.x > 1 || raw.y > 1 || raw.w > 1 || raw.h > 1;
+  const x = pixelMode ? raw.x / displayWidth : raw.x;
+  const y = pixelMode ? raw.y / displayHeight : raw.y;
+  const w = pixelMode ? raw.w / displayWidth : raw.w;
+  const h = pixelMode ? raw.h / displayHeight : raw.h;
   return {
-    x: clamp01(raw.x),
-    y: clamp01(raw.y),
-    w: Math.min(Math.max(raw.w, 0), 1 - clamp01(raw.x)),
-    h: Math.min(Math.max(raw.h, 0), 1 - clamp01(raw.y)),
+    x: clamp01(x),
+    y: clamp01(y),
+    w: Math.min(Math.max(w, 0), 1 - clamp01(x)),
+    h: Math.min(Math.max(h, 0), 1 - clamp01(y)),
   };
 }
 
 export function normalizeLegacyArgs(
   args: Record<string, unknown>,
   durationMs: number,
+  display: { width: number; height: number } = { width: 1, height: 1 },
 ): NormalizedIntent {
   const intent: IntentDirective = {};
   const normalizedFrom: string[] = [];
@@ -89,7 +104,7 @@ export function normalizeLegacyArgs(
     | { x: number; y: number; w: number; h: number }
     | undefined;
   if (roiRaw && typeof roiRaw === 'object') {
-    intent.roi_hint = normalizeRoi(roiRaw);
+    intent.roi_hint = normalizeRoi(roiRaw, display.width, display.height);
     normalizedFrom.push('crop/bbox/roi');
   }
   if (args['probe_only'] === true) {

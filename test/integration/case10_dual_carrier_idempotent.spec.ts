@@ -27,14 +27,33 @@ describe('case10: 双载体字节幂等', () => {
       { defaultStreamWindowMs: 2200 },
     );
 
-    // 首次调用源登记：packetId → {strip, anchor, sha}
+    // 首次调用源登记：packetId → {strip, anchor, sha}；同时按 anchorFId 登记
+    // 独立载体（被 Epoch 收编的包不再以条带输出，冷区引用与同锚点的任一
+    // 载体逐字节一致即为幂等语义）。
     const sources = new Map<number, { strip: Buffer; anchor: Buffer | null; sha: string | null }>();
+    const anchorByFid = new Map<number, Buffer>();
+    const shaByFid = new Map<number, string>();
+    const emittedIds = new Set<number>();
     for (const a of first.packets) {
+      expect(emittedIds.has(a.packet.packetId), `packet #${a.packet.packetId} 重复输出`).toBe(false);
+      emittedIds.add(a.packet.packetId);
       sources.set(a.packet.packetId, {
         strip: a.imageBytes,
         anchor: a.anchorBytes,
         sha: a.packet.anchorFSha256,
       });
+      if (a.packet.anchorFId !== null) {
+        // 冷区引用的 anchorBytes 不重复导出；其 imageBytes 即独立载体原字节
+        const carrier = a.anchorBytes ?? (a.packet.historyMode === 'anchor_only_ref' ? a.imageBytes : null);
+        if (carrier) {
+          if (!anchorByFid.has(a.packet.anchorFId)) {
+            anchorByFid.set(a.packet.anchorFId, carrier);
+            shaByFid.set(a.packet.anchorFId, a.packet.anchorFSha256!);
+          } else {
+            expect(a.imageBytes.equals(anchorByFid.get(a.packet.anchorFId)!)).toBe(true);
+          }
+        }
+      }
     }
 
     // 第二次调用：引用类包必须逐字节复用首次字节
@@ -44,10 +63,17 @@ describe('case10: 双载体字节幂等', () => {
     expect(refPackets.length).toBeGreaterThan(0);
     for (const a of refPackets) {
       if (a.packet.historyMode === 'anchor_only_ref') {
+        const fid = a.packet.anchorFId!;
         const src = sources.get(a.packet.anchorOnlyRefPacketId!);
-        expect(src, `冷区引用的源包 #${a.packet.anchorOnlyRefPacketId} 须在首次发包中`).toBeTruthy();
-        expect(a.imageBytes.equals(src!.anchor!)).toBe(true);
-        expect(a.packet.anchorFSha256).toBe(src!.sha);
+        if (src) {
+          expect(a.imageBytes.equals(src.anchor!)).toBe(true);
+          expect(a.packet.anchorFSha256).toBe(src.sha);
+        } else {
+          // 源条带已被同调用冷区引用吸收（每包只输出一次）：与同锚点载体比对
+          expect(anchorByFid.has(fid), `锚点 #${fid} 的载体字节须在首次发包中登记`).toBe(true);
+          expect(a.imageBytes.equals(anchorByFid.get(fid)!)).toBe(true);
+          expect(a.packet.anchorFSha256).toBe(shaByFid.get(fid));
+        }
       } else {
         // full_strip_ref：重发原 packetId，字节 = 首次 strip
         // （FORM_3 源包的条带即独立载体本身，stripSha256 为 null 属规格语义）

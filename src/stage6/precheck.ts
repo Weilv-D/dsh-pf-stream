@@ -4,7 +4,8 @@
  * 规格《六》§2：
  * - 单次请求 56 MiB 安全字节水位：Base64 膨胀按 4/3 计入（预留协议结构余量）；
  * - 图像单边 ≤ 4096 px 不变量：PF-Stream 画布最大边 1344 px 天然合规；
- *   imageCountTiersEnabled（多图降档规则）默认关闭，开启后按单边上限执行门控；
+ *   imageCountTiersEnabled（多图降档规则）默认关闭；开启时超限画布放行，
+ *   由调用方的多图降档规则接管（当前产物恒 ≤1344，分支实际不可达）。
  * - 截断顺序：优先从旧到新丢弃冷区引用，其次从旧到新丢弃热区条带，
  *   最后切分当前增量包（保留时序前缀）。
  */
@@ -49,11 +50,12 @@ export function encodedSizeOf(bytes: Buffer): number {
   return Math.ceil((bytes.length * 4) / 3);
 }
 
-/** 画布边长不变量（契约级防护，违规即错误而非降级）。 */
+/** 画布边长不变量（契约级防护，违规即错误而非降级）。
+ *  imageCountTiersEnabled 开启时放行超限画布（由调用方多图降档规则接管）。 */
 export function assertCanvasEdgeLegal(artifact: PacketArtifact, tiersEnabled: boolean): void {
   const [w, h] = artifact.packet.canvasSize;
   if (w > MAX_CANVAS_EDGE_PX || h > MAX_CANVAS_EDGE_PX) {
-    if (tiersEnabled) return; // 门控开启：超限单边在此截断（当前产物恒 ≤1344，实际不可达）
+    if (tiersEnabled) return;
     throw new PfStreamError(
       'PFSTREAM_CANVAS_EDGE_OVER_LIMIT',
       `画布单边 ${Math.max(w, h)}px 超过 ${MAX_CANVAS_EDGE_PX}px 上限（packet #${artifact.packet.packetId}）`,
@@ -88,8 +90,6 @@ export function precheckBundle(items: BundleItem[], options: PrecheckOptions): P
   }
 
   const tokensOf = (a: PacketArtifact) => billTokens(a.packet.canvasSize[0], a.packet.canvasSize[1]);
-  const totalTokens = items.reduce((acc, it) => acc + tokensOf(it.artifact), 0);
-  const totalBytes = items.reduce((acc, it) => acc + encodedSizeOf(it.artifact.imageBytes), 0);
 
   let kept = items.slice();
   const dropped: PrecheckResult['dropped'] = [];

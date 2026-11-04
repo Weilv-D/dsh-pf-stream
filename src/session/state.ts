@@ -23,8 +23,11 @@ import type {
 
 /** 视频指纹：规范化路径 + size + mtime 联合哈希前 16 hex。 */
 export function fingerprintOf(videoPath: string): VideoFingerprint {
-  const normalizedPath = resolve(videoPath).replaceAll('\\', '/').toLowerCase();
-  const st = statSync(normalizedPath);
+  // stat 使用原始路径（Linux/macOS 大小写敏感，小写化会指向不存在的文件）；
+  // 小写化仅用于指纹哈希输入，保证 Windows 路径大小写差异不产生重复槽位。
+  const resolvedPath = resolve(videoPath);
+  const st = statSync(resolvedPath);
+  const normalizedPath = resolvedPath.replaceAll('\\', '/').toLowerCase();
   const digest = createHash('sha256')
     .update(`${normalizedPath}|${st.size}|${Math.round(st.mtimeMs)}`)
     .digest('hex');
@@ -84,9 +87,6 @@ export function getVideoSlot(state: SessionState, fingerprint: VideoFingerprint)
         gEma: 0,
         emaWarmupLeft: 0,
         settleStartPtsMs: null,
-        lastKCandidates: null,
-        lastMotionVec: null,
-        arena: null,
       },
       pendingPUnits: [],
       lastAnchorF: null,
@@ -125,19 +125,11 @@ export function setMemorySession(state: SessionState): void {
 // 供进程重建一致性验证与宿主集成阶段的 storageDomain 落盘载荷复用。
 // ---------------------------------------------------------------------------
 
-interface SnapshotArena {
-  ptsMs: number;
-  rho: number;
-  g: number;
-  image672: string;
-  sourceCropBbox: [number, number, number, number];
-}
-
 interface SnapshotVideo {
   fingerprint: VideoFingerprint;
   lastConsumedPtsMs: number;
   lastEmittedPacketPtsMs: number | null;
-  snapshot: Omit<StateMachineSnapshot, 'arena'> & { arena: SnapshotArena | null };
+  snapshot: StateMachineSnapshot;
   pendingPUnits: Array<{ ptsMs: number; image336: string; sourceCropBbox: [number, number, number, number] }>;
   lastAnchorF: StreamCursor['lastAnchorF'];
   history: {
@@ -189,16 +181,6 @@ export function exportSessionSnapshot(state: SessionState): string {
         lastEmittedPacketPtsMs: c.lastEmittedPacketPtsMs,
         snapshot: {
           ...c.snapshot,
-          arena:
-            c.snapshot.arena == null
-              ? null
-              : {
-                  ptsMs: c.snapshot.arena.ptsMs,
-                  rho: c.snapshot.arena.rho,
-                  g: c.snapshot.arena.g,
-                  image672: c.snapshot.arena.image672.toString('base64'),
-                  sourceCropBbox: c.snapshot.arena.sourceCropBbox,
-                },
         },
         pendingPUnits: c.pendingPUnits.map((p) => ({
           ptsMs: p.ptsMs,
@@ -289,16 +271,6 @@ export function importSessionSnapshot(json: string): SessionState {
         lastEmittedPacketPtsMs: v.lastEmittedPacketPtsMs,
         snapshot: {
           ...v.snapshot,
-          arena:
-            v.snapshot.arena == null
-              ? null
-              : {
-                  ptsMs: v.snapshot.arena.ptsMs,
-                  rho: v.snapshot.arena.rho,
-                  g: v.snapshot.arena.g,
-                  image672: Buffer.from(v.snapshot.arena.image672, 'base64'),
-                  sourceCropBbox: v.snapshot.arena.sourceCropBbox,
-                },
         },
         pendingPUnits: v.pendingPUnits.map((p) => ({
           ptsMs: p.ptsMs,

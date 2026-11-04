@@ -15,6 +15,8 @@ const FOCUS: ReadonlySet<string> = new Set(['motion', 'detail', 'balanced']);
 
 export interface AdapterLimits {
   lastPtsMs: number;
+  displayWidth: number;
+  displayHeight: number;
   maxPackets: number;
   maxTokensBudget: number;
 }
@@ -49,7 +51,10 @@ export function adaptCallArgs(
     throw new PfStreamError('PFSTREAM_ARGS_VIDEO_PATH', 'video_path 必须为非空字符串');
   }
 
-  const legacy: NormalizedIntent = normalizeLegacyArgs(args, limits.lastPtsMs);
+  const legacy: NormalizedIntent = normalizeLegacyArgs(args, limits.lastPtsMs, {
+    width: limits.displayWidth,
+    height: limits.displayHeight,
+  });
   const rawIntent = isRecord(args['intent']) ? (args['intent'] as Record<string, unknown>) : {};
 
   const intent: IntentDirective = {};

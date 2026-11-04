@@ -54,6 +54,8 @@ export const HEARTBEAT_INTERVAL_MS = 5000;
 
 export interface StreamRunOptions {
   ffmpegPath: string;
+  /** 末帧探测与定点索引用的 ffprobe；缺省由 ffmpegPath 同目录派生。 */
+  ffprobePath?: string | undefined;
   renderVisualId: boolean;
   /** 流式窗口长度（defaultStreamWindowMs）。 */
   windowMs: number;
@@ -125,7 +127,6 @@ interface RuntimeState {
   fSwitchImage: CapturedUnit | null;
   motionEnteredAtPtsMs: number | null;
   lastFEmittedPtsMs: number | null;
-  maxDSinceLastF: number;
   lastHeartbeatPtsMs: number | null;
   tokensUsed: number;
 }
@@ -278,7 +279,6 @@ export async function runStreamPass(
     hintLines.push(timelineHintLine(artifact.packet, sessionIntent.roiHint ?? null));
     if (fUnit) {
       rt.lastFEmittedPtsMs = fUnit.ptsMs;
-      rt.maxDSinceLastF = 0;
     }
     rt.tokensUsed += form === 'FORM_1_STANDARD_STRIP' || form === 'FORM_4_PARTIAL_STRIP' ? 530 : 274;
     packMs += performance.now() - t0;
@@ -326,6 +326,7 @@ export async function runStreamPass(
       w1,
       {
         ffmpegPath: options.ffmpegPath,
+        ffprobePath: options.ffprobePath,
         displayWidth: probe.displayWidth,
         displayHeight: probe.displayHeight,
         workMaxEdge: options.streamWorkMaxEdge,
@@ -506,7 +507,6 @@ export async function runStreamPass(
           rt.lastHeartbeatPtsMs = ptsMs;
         }
 
-        rt.maxDSinceLastF = Math.max(rt.maxDSinceLastF, signal.d);
         // 擂台单槽不变量观测：同一时刻持有的 672 槽位数（MOTION 擂台 + SETTLE 观察窗各 1）
         const arenaHeld = (rt.motionArena !== null ? 1 : 0) + (rt.settleArena !== null ? 1 : 0);
         if (arenaHeld > arenaMaxHeld) arenaMaxHeld = arenaHeld;
@@ -586,7 +586,6 @@ function restoreRuntime(cursor: StreamCursor): RuntimeState {
     fSwitchImage: null,
     motionEnteredAtPtsMs: s.motionEnteredAtPtsMs ?? null,
     lastFEmittedPtsMs: cursor.lastEmittedPacketPtsMs,
-    maxDSinceLastF: s.maxDSinceLastF ?? 1,
     lastHeartbeatPtsMs: s.lastHeartbeatPtsMs ?? null,
     tokensUsed: 0,
   };
@@ -600,16 +599,12 @@ function buildCursor(rt: RuntimeState, cursor: StreamCursor, lastPts: number, ct
     gEma: rt.clarity.gEma,
     emaWarmupLeft: rt.clarity.warmupLeft,
     settleStartPtsMs: rt.machine.settleStartPtsMs,
-    lastKCandidates: null,
-    lastMotionVec: null,
-    arena: null,
     mergeStartPtsMs: rt.machine.mergeStartPtsMs,
     switchStaticSincePtsMs: rt.machine.switchStaticSincePtsMs,
     fSwitchPending: rt.machine.fSwitchPending,
     clarityWarmupLeft: rt.clarity.warmupLeft,
     rhoHistory: rt.clarity.rhoHistory.slice(-3),
     motionEnteredAtPtsMs: rt.motionEnteredAtPtsMs,
-    maxDSinceLastF: rt.maxDSinceLastF,
     lastHeartbeatPtsMs: rt.lastHeartbeatPtsMs,
     ctrl: ctrl.snapshot(),
   };

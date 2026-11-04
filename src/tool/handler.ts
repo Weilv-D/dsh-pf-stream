@@ -8,6 +8,7 @@
 
 import type { IntentDirective, LegacyInspectionParams, ProbeResult } from '../types.js';
 import { PfStreamError } from '../errors.js';
+import { adaptCallArgs } from '../entry/adapter.js';
 import type { InspectionResult } from '../stage3/deterministicRouter.js';
 import type { PacketArtifact } from '../stage4/canvasPacker.js';
 import type { StreamCallResult } from './streamCall.js';
@@ -24,6 +25,16 @@ export interface ToolExec {
   signal: AbortSignal;
   /** 宿主会话标识（缺省聚合到 'default'）。 */
   sessionId?: string | undefined;
+  /**
+   * 宿主 ToolExec 的 agent 投影（dsh-tools 语义：exec.agent.session 为当前会话）。
+   * 宿主未提供顶层 sessionId 时按 agent.session.id 取会话标识。
+   */
+  agent?: { session?: { id?: string | undefined } } | undefined;
+}
+
+/** 会话标识解析：顶层 sessionId 优先，其次宿主 agent.session.id，缺省聚合 'default'。 */
+export function resolveSessionId(exec: ToolExec | undefined): string | undefined {
+  return exec?.sessionId ?? exec?.agent?.session?.id;
 }
 
 export type ToolResult = Record<string, unknown>;
@@ -71,6 +82,8 @@ export interface ToolDeps {
   stream?: StreamFn | undefined;
   /** 宿主附件回传（可选：缺省时只返回画布元数据）。 */
   attachImages?: AttachImagesFn | undefined;
+  /** 入口适配器钳制上限（缺省用插件默认配置值）。 */
+  limits?: { maxPackets: number; maxTokensBudget: number } | undefined;
 }
 
 export function resolveAction(args: ToolCallArgs): NonNullable<IntentDirective['action']> {
@@ -96,17 +109,25 @@ export async function handleToolCall(
   exec: ToolExec | undefined,
   deps: ToolDeps,
 ): Promise<ToolResult> {
-  const action = resolveAction(args);
+  // 统一入口：probe 后经入口适配器归一化（历史便捷字段 + 枚举校验 + 钳制），
+  // 再按 intent.action 路由（《五》§1 与《七》§1）。
+  const probeResult = await deps.probe(args.video_path, exec?.signal);
+  const { intent } = adaptCallArgs(args as unknown as Record<string, unknown>, {
+    lastPtsMs: probeResult.lastPtsMs,
+    displayWidth: probeResult.displayWidth,
+    displayHeight: probeResult.displayHeight,
+    maxPackets: deps.limits?.maxPackets ?? 64,
+    maxTokensBudget: deps.limits?.maxTokensBudget ?? 65536,
+  });
+  const action = intent.action ?? 'pf_stream';
+
   if (action === 'probe') {
-    const probeResult = await deps.probe(args.video_path, exec?.signal);
     return { action: 'probe', probe: probeResult };
   }
   if (action === 'timestamps' || action === 'uniform') {
     if (!deps.inspect) {
       throw new PfStreamError('PFSTREAM_ACTION_UNAVAILABLE', `action '${action}' 通道不可用`);
     }
-    const probeResult = await deps.probe(args.video_path, exec?.signal);
-    const intent = (args.intent ?? {}) as IntentDirective;
     const inspection = await deps.inspect(args.video_path, probeResult, intent, exec?.signal);
     const packets = await withPacketImages(inspection.packets, deps.attachImages);
     return {
@@ -120,9 +141,7 @@ export async function handleToolCall(
     if (!deps.stream) {
       throw new PfStreamError('PFSTREAM_ACTION_UNAVAILABLE', `action '${action}' 通道不可用`);
     }
-    const probeResult = await deps.probe(args.video_path, exec?.signal);
-    const intent = (args.intent ?? {}) as IntentDirective;
-    const stream = await deps.stream(args.video_path, probeResult, intent, exec?.sessionId, exec?.signal);
+    const stream = await deps.stream(args.video_path, probeResult, intent, resolveSessionId(exec), exec?.signal);
     const packets = await withPacketImages(stream.packets, deps.attachImages);
     return {
       action: 'pf_stream',

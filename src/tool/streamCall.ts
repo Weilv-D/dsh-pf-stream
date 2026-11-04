@@ -20,12 +20,14 @@ import {
   type BundleKind,
   type PrecheckResult,
 } from '../stage6/precheck.js';
-import { baselinesFromIntent, mergeSessionIntent } from '../stage5/intent.js';
+import { baselinesFromIntent, mergeSessionIntent, sessionIntentChanged } from '../stage5/intent.js';
 import { fingerprintOf, getSessionState, getVideoSlot } from '../session/state.js';
 import type { IntentDirective, ProbeResult } from '../types.js';
 
 export interface StreamCallOptions {
   ffmpegPath: string;
+  /** 末帧探测与定点索引用的 ffprobe；缺省由 ffmpegPath 同目录派生。 */
+  ffprobePath?: string | undefined;
   renderVisualId: boolean;
   defaultStreamWindowMs: number;
   streamWorkMaxEdge: number;
@@ -78,17 +80,22 @@ export async function runStreamCall(
   const fingerprint = fingerprintOf(videoPath);
   const slot = getVideoSlot(session, fingerprint);
 
-  // 意图层：字段级合并到 session_intent（规格《五》§1.3）
-  session.intentSeq += 1;
-  const merged = mergeSessionIntent(session.intent, intent, {
+  // 意图层：字段级合并到 session_intent（规格《五》§1.3）；
+  // 会话意图实际变化时才递增 intentSeq（probe/重复调用不产生新 intentId）。
+  const prevIntent = session.intent;
+  const merged = mergeSessionIntent(prevIntent, intent, {
     mode: 'standard',
     focus: 'balanced',
   });
+  if (sessionIntentChanged(prevIntent, merged) || session.intentSeq === 0) {
+    session.intentSeq += 1;
+  }
   merged.intentId = `intent_${session.intentSeq}`;
   session.intent = merged;
 
   const result = await runStreamPass(videoPath, probe, merged, slot.cursor, {
     ffmpegPath: options.ffmpegPath,
+    ffprobePath: options.ffprobePath,
     renderVisualId: options.renderVisualId,
     windowMs: intent.pts_window
       ? Math.max(1, intent.pts_window[1] - intent.pts_window[0])
@@ -129,10 +136,20 @@ export async function runStreamCall(
   );
   const { cold } = planHistoryRefs(slot, merged.intentId);
 
+  // 本次增量包被 Epoch 收编为冷区引用时，原始条带不再重复输出
+  // （规格《六》§3：按最终包龄输出冷区 FORM_3 与热区条带，每包只出现一次）。
+  const newPacketIds = new Set(result.packets.map((a) => a.packet.packetId));
+  const absorbedNewIds = new Set(
+    slot.epoch.coldRefs
+      .map((c) => c.sourcePacketId)
+      .filter((id) => newPacketIds.has(id)),
+  );
+  const incremental = result.packets.filter((a) => !absorbedNewIds.has(a.packet.packetId));
+
   const items: BundleItem[] = [
     ...cold.map((artifact) => ({ kind: 'cold' as const, artifact })),
     ...hot.map((artifact) => ({ kind: 'hot' as const, artifact })),
-    ...result.packets.map((artifact) => ({ kind: 'new' as const, artifact })),
+    ...incremental.map((artifact) => ({ kind: 'new' as const, artifact })),
   ];
   const precheck = precheckBundle(items, {
     maxRequestBytes: options.maxRequestBytes,

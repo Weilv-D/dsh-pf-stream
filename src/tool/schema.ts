@@ -59,10 +59,25 @@ export const intentValueSchema: ValueSchema = {
   additionalProperties: false,
 };
 
-/** 工具 parameters：属性名 → 值 schema 映射。顶层开放以接收历史便捷字段。 */
+/** 历史便捷字段（顶层）：由入口适配器归一化为标准 IntentDirective（《五》§1.1）。 */
+export const legacyValueSchemas: Record<string, ValueSchema> = {
+  start_time: { type: 'number', description: '起始时间（秒或毫秒，≤2×时长数值判秒；归一化为 intent.pts_window）' },
+  end_time: { type: 'number', description: '结束时间（秒或毫秒；归一化为 intent.pts_window）' },
+  time_range: { type: 'array', items: { type: 'number' }, description: '时间范围 [start, end]（秒或毫秒）' },
+  timestamps: { type: 'array', items: { type: 'number' }, description: '抽帧时间戳列表（秒或毫秒，触发 timestamps 检视）' },
+  fps: { type: 'number', description: '均匀抽帧帧率（触发 uniform 检视）' },
+  interval: { type: 'number', description: '均匀抽帧间隔（秒或毫秒，触发 uniform 检视）' },
+  num_frames: { type: 'number', description: '均匀抽帧目标总帧数（触发 uniform 检视）' },
+  crop: { type: 'object', description: '局部区域（归一化或像素坐标，归一化为 intent.roi_hint）' },
+  probe_only: { type: 'boolean', description: '仅探测视频元数据（等价 action="probe"）' },
+};
+
+/** 工具 parameters：属性名 → 值 schema 映射。顶层额外声明历史便捷字段
+ * （宿主会剥离未声明参数，故必须显式列出才能到达适配器）。 */
 export const toolParameters: Record<string, ValueSchema> = {
   video_path: { type: 'string', description: '待处理的本地视频文件路径' },
   intent: intentValueSchema,
+  ...legacyValueSchemas,
 };
 
 export const TOOL_DESCRIPTION =

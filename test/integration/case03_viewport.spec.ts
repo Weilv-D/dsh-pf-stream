@@ -94,8 +94,9 @@ describe('case 3 — 视窗裁剪与短边保护（纯函数）', () => {
       fullFrame: false,
       slot: 'P',
     });
-    expect(envelope.sourceCropBbox[2]).toBe(168);
-    expect(envelope.sourceCropBbox[3]).toBe(168);
+    // 包络 192×108 px：向上取整到 42 倍数（210）完整包含目标区，不裁边
+    expect(envelope.sourceCropBbox[2]).toBe(210);
+    expect(envelope.sourceCropBbox[3]).toBe(210);
   });
 
   it('源短边物理不足 84：内容级补边 + padOverflow', () => {

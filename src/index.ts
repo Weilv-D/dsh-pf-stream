@@ -174,6 +174,7 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
   const inspect: InspectFn = (videoPath, probeResult, intent, signal) =>
     runDeterministicInspection(videoPath, probeResult, intent, {
       ffmpegPath: bins.ffmpeg,
+      ffprobePath: bins.ffprobe,
       renderVisualId: config.renderVisualId,
       packetIdStart: 1,
       globalIdStart: 1,
@@ -185,6 +186,7 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
   const stream: StreamFn = (videoPath, probeResult, intent, sessionId, signal) =>
     runStreamCall(videoPath, probeResult, intent, sessionId ?? 'default', {
       ffmpegPath: bins.ffmpeg,
+      ffprobePath: bins.ffprobe,
       renderVisualId: config.renderVisualId,
       defaultStreamWindowMs: config.defaultStreamWindowMs,
       streamWorkMaxEdge: config.streamWorkMaxEdge,
@@ -212,7 +214,16 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
     // 会话级状态使并发不安全。
     isConcurrencySafe: () => false,
     async execute(args: ToolCallArgs, exec: ToolExec | undefined): Promise<ToolResult> {
-      return handleToolCall(args, exec, { probe, inspect, stream, attachImages });
+      return handleToolCall(args, exec, {
+        probe,
+        inspect,
+        stream,
+        attachImages,
+        limits: {
+          maxPackets: config.maxPacketsPerCall,
+          maxTokensBudget: config.maxTokensBudgetPerCall,
+        },
+      });
     },
   };
 }
