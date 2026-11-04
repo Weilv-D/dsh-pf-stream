@@ -32,7 +32,9 @@ import { classifySceneChange, isBlackOrBlownFrame } from '../stage2/switchDetect
 import { packCanvas, timelineHintLine, type PacketArtifact, type UnitInput } from '../stage4/canvasPacker.js';
 import { applyViewport, planViewport } from '../stage4/viewport.js';
 import { baselinesFromIntent, type StreamBaselines } from '../stage5/intent.js';
+import { StreamController } from '../stage5/controller.js';
 import type {
+  CtrlTickLogEntry,
   PendingPUnit,
   ProbeResult,
   RoiHint,
@@ -46,7 +48,6 @@ import type { RgbImage } from '../utils/image.js';
 export const STEP_MS = 33.3;
 export const T_MERGE_MS = 50;
 export const SWITCH_STATIC_MS = 250;
-export const R4_SETTLE_MS = 80;
 export const F_SWITCH_DEFER_MAX_MS = 300;
 export const NEAR_DUP_MS = 500;
 export const HEARTBEAT_INTERVAL_MS = 5000;
@@ -80,6 +81,8 @@ export interface StreamTelemetry {
   window: [number, number];
   stopReason: 'budget_packets' | 'budget_tokens' | 'end_of_window' | 'end_of_stream';
   ctrlParams: StreamBaselines;
+  /** 500ms 节拍生效值轨迹（R1/R2/R3/R4 断言用）。 */
+  ctrlTickLog: CtrlTickLogEntry[];
 }
 
 export interface StreamRunResult {
@@ -120,7 +123,6 @@ interface RuntimeState {
   lastFEmittedPtsMs: number | null;
   maxDSinceLastF: number;
   lastHeartbeatPtsMs: number | null;
-  r4Active: boolean;
   tokensUsed: number;
 }
 
@@ -142,6 +144,7 @@ export async function runStreamPass(
 
   const w0 = Math.min(options.windowStartMs ?? cursor.lastConsumedPtsMs, probe.lastPtsMs);
   const w1 = Math.min(w0 + options.windowMs, probe.lastPtsMs);
+  const ctrl = new StreamController(baselines, w0, cursor.snapshot.ctrl);
   const packets: PacketArtifact[] = [];
   const hintLines: string[] = [];
   const heartbeats: Array<{ seq: number; ptsMs: number }> = [];
@@ -246,6 +249,7 @@ export async function runStreamPass(
     const artifact = packCanvas(form, units, {
       packetId: counters.packetSeq,
       appliedIntentId: options.appliedIntentId,
+      appliedCtrlId: ctrl.activeCtrlIds(),
       renderVisualId: options.renderVisualId,
       triggerPath: trigger,
     });
@@ -313,16 +317,15 @@ export async function runStreamPass(
         framesStepped++;
         const t0 = performance.now();
         const gray = toGray64x36(frame.width, frame.height, frame.data);
-        const signal = perceiveFrame(perception, ptsMs, gray, weights, baselines.HHighEff);
+        const signal = perceiveFrame(perception, ptsMs, gray, weights, ctrl.live.HHighEff);
         const verdict = classifySceneChange(signal.switchCandidateBlocks, signal.histL1);
 
-        const tSettleEff = rt.r4Active ? R4_SETTLE_MS : baselines.TSettleEff;
         const step = rt.machine.step(
           ptsMs,
           signal.d,
           {
-            hHighEff: baselines.HHighEff,
-            tSettleEff,
+            hHighEff: ctrl.live.HHighEff,
+            tSettleEff: ctrl.live.TSettleEff,
             tMergeMs: T_MERGE_MS,
             switchStaticMs: SWITCH_STATIC_MS,
           },
@@ -345,7 +348,7 @@ export async function runStreamPass(
               rt.pendingF = null;
               rt.motionArena = null;
               rt.settleArena = null;
-              rt.r4Active = true;
+              ctrl.onSwitch(ptsMs);
               resetTemporalContext(perception);
               updateClarity(rt.clarity, signal.g, { resetWarmup: true });
               rt.fSwitchImage = null;
@@ -358,10 +361,10 @@ export async function runStreamPass(
               break;
             }
             case 'enter_motion': {
-              rt.r4Active = false; // R4 恢复路径①
               rt.motionArena = null;
               // 合并确认窗内运动复发：已锁定的待发 F 保留，
-              // 留待与新 P 簇合并发出（状态机 merge_emit 路径）
+              // 留待与新 P 簇合并发出（状态机 merge_emit 路径）；
+              // R4 恢复路径①由 controller.onFrameStepped 的状态迁移检测完成
               rt.motionEnteredAtPtsMs = ptsMs;
               updateClarity(rt.clarity, signal.g, { resetWarmup: true });
               break;
@@ -401,13 +404,16 @@ export async function runStreamPass(
           }
         }
 
+        // ---- 自闭环节拍（500ms PTS；R3>R1>R2 求值 + 一阶平滑，R4 状态迁移恢复）----
+        ctrl.onFrameStepped(ptsMs, signal.d, signal.rFlip, rt.machine.state);
+
         // ---- MOTION 段：位移积分采样 + PEAK 擂台 + 容量/超时边界 ----
         if (rt.machine.state === 'MOTION') {
-          rt.machine.integratorA += signal.alpha * signal.d * stepScale;
-          while (rt.machine.integratorA >= baselines.SEff) {
+          rt.machine.integratorA += ctrl.alphaFor(signal.alpha) * signal.d * stepScale;
+          while (rt.machine.integratorA >= ctrl.live.SEff) {
             rt.machine.integratorA = Math.min(
-              rt.machine.integratorA - baselines.SEff,
-              baselines.SEff - 1e-4,
+              rt.machine.integratorA - ctrl.live.SEff,
+              ctrl.live.SEff - 1e-4,
             );
             rt.pendingP.push(capture(frame, ptsMs, 'P', signal.dLocal, signal.topK));
           }
@@ -424,14 +430,14 @@ export async function runStreamPass(
           if (rt.pendingP.length >= 4) {
             const cooled =
               rt.lastFEmittedPtsMs === null ||
-              ptsMs - rt.lastFEmittedPtsMs >= baselines.TCoolEff;
+              ptsMs - rt.lastFEmittedPtsMs >= ctrl.live.TCoolEff;
             const withF = cooled && rt.clarity.warmupLeft <= 0 && rt.motionArena !== null;
             if (withF) emit('PEAK_FULL', true);
             else emit('PEAK_FULL', false); // 未满冷却/预热期 → 纯 4P（FORM_2）
           }
           if (
             rt.motionEnteredAtPtsMs !== null &&
-            ptsMs - rt.motionEnteredAtPtsMs >= baselines.tMaxMEff &&
+            ptsMs - rt.motionEnteredAtPtsMs >= ctrl.live.tMaxMEff &&
             rt.pendingP.length >= 1 &&
             rt.pendingP.length <= 3
           ) {
@@ -510,9 +516,10 @@ export async function runStreamPass(
       ptsRealign,
       window: [w0, w1],
       stopReason,
-      ctrlParams: baselines,
+      ctrlParams: { ...ctrl.live },
+      ctrlTickLog: ctrl.tickLog.slice(),
     },
-    nextCursor: buildCursor(rt, cursor, lastPtsOfWindow ?? w0),
+    nextCursor: buildCursor(rt, cursor, lastPtsOfWindow ?? w0, ctrl),
     counters,
   };
 }
@@ -554,12 +561,11 @@ function restoreRuntime(cursor: StreamCursor): RuntimeState {
     lastFEmittedPtsMs: cursor.lastEmittedPacketPtsMs,
     maxDSinceLastF: s.maxDSinceLastF ?? 1,
     lastHeartbeatPtsMs: s.lastHeartbeatPtsMs ?? null,
-    r4Active: s.r4Active ?? false,
     tokensUsed: 0,
   };
 }
 
-function buildCursor(rt: RuntimeState, cursor: StreamCursor, lastPts: number): StreamCursor {
+function buildCursor(rt: RuntimeState, cursor: StreamCursor, lastPts: number, ctrl: StreamController): StreamCursor {
   const snapshot: StateMachineSnapshot = {
     state: rt.machine.state,
     enteredAtPtsMs: rt.machine.enteredAtPtsMs,
@@ -578,7 +584,7 @@ function buildCursor(rt: RuntimeState, cursor: StreamCursor, lastPts: number): S
     motionEnteredAtPtsMs: rt.motionEnteredAtPtsMs,
     maxDSinceLastF: rt.maxDSinceLastF,
     lastHeartbeatPtsMs: rt.lastHeartbeatPtsMs,
-    r4Active: rt.r4Active,
+    ctrl: ctrl.snapshot(),
   };
   const pendingPUnits: PendingPUnit[] = rt.pendingP.map((p) => ({
     ptsMs: p.ptsMs,
@@ -610,6 +616,7 @@ function emptyTelemetry(
     window,
     stopReason,
     ctrlParams: baselines,
+    ctrlTickLog: [],
   };
 }
 

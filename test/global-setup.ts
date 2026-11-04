@@ -15,6 +15,7 @@ export default function setup(): void {
     'case03_viewport.mjs',
     'case04_modulus.mjs',
     'case05_19_stream.mjs',
+    'case13_14_ctrl.mjs',
   ].map((name) => join(HERE, 'fixtures', 'gen', name));
   for (const script of scripts) {
     const run = spawnSync(process.execPath, [script], { encoding: 'utf8', windowsHide: true });

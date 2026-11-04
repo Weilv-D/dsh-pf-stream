@@ -220,7 +220,42 @@ export interface StateMachineSnapshot {
   motionEnteredAtPtsMs?: number | null;
   maxDSinceLastF?: number;
   lastHeartbeatPtsMs?: number | null;
-  r4Active?: boolean;
+  /** 自闭环控制器状态（M3 起填充）。 */
+  ctrl?: ControllerSnapshot;
+}
+
+/** Stage 5 自闭环控制器的可序列化状态（游标续流用）。 */
+export interface ControllerSnapshot {
+  sTarget: number;
+  tCoolTarget: number;
+  hHighTarget: number;
+  r1Active: boolean;
+  r2Active: boolean;
+  r3Active: boolean;
+  r4Active: boolean;
+  ctrlId: { r1?: string; r2?: string; r3?: string; r4?: string };
+  seq: { r1: number; r2: number; r3: number; r4: number };
+  lastTickPtsMs: number | null;
+  rFlipRun: number;
+  rFlipCalmRun: number;
+  r1CondSincePtsMs: number | null;
+  r2CondSincePtsMs: number | null;
+  lastState: 'STATIC' | 'MOTION' | 'SETTLE' | 'SWITCH';
+  stateSincePtsMs: number;
+  liveSEff: number;
+  liveTCoolEff: number;
+  liveTSettleEff: number;
+  liveHHighEff: number;
+}
+
+/** 500ms 节拍上的生效值轨迹（遥测断言用）。 */
+export interface CtrlTickLogEntry {
+  ptsMs: number;
+  sEff: number;
+  tCoolEff: number;
+  tSettleEff: number;
+  hHighEff: number;
+  activeRules: string[];
 }
 
 export interface PendingPUnit {

@@ -20,6 +20,11 @@ export async function makeSlot(path: string): Promise<SessionVideoState> {
   return getVideoSlot(state, fingerprintOf(path));
 }
 
+/** 以 fixture 文件名构造会话槽位（常用路径）。 */
+export async function makeFixtureSlot(name: string): Promise<SessionVideoState> {
+  return makeSlot(fixturePath(name));
+}
+
 export const STANDARD_INTENT: SessionIntent = {
   intentId: 'intent_1',
   mode: 'standard',

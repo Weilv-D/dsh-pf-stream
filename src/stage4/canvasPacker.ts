@@ -42,6 +42,8 @@ export interface PackOptions {
   renderVisualId: boolean;
   /** 触发路径（确定性通道为 DETERMINISTIC）。 */
   triggerPath: CanvasPacket['triggerPath'];
+  /** 发包时刻激活的自闭环规则 ctrl_id 列表（流式通道）。 */
+  appliedCtrlId?: string[];
 }
 
 /** 画布尺寸（宽, 高）。 */
@@ -171,7 +173,7 @@ export function packCanvas(
     anchorFSha256: anchorSha,
     stripSha256: stripSha,
     appliedIntentId: options.appliedIntentId,
-    appliedCtrlId: [],
+    appliedCtrlId: options.appliedCtrlId ?? [],
     units: descriptors,
   };
 
