@@ -46,7 +46,8 @@ export function ensureFixture(outputName, argv) {
     windowsHide: true,
   });
   if (run.status !== 0) {
-    throw new Error(`fixture ${outputName} 生成失败（exit ${run.status}）：${run.stderr}`);
+    const detail = run.error ? run.error.message : run.stderr;
+    throw new Error(`fixture ${outputName} 生成失败（exit ${run.status}）：${detail}`);
   }
   if (!existsSync(output)) {
     throw new Error(`fixture ${outputName} 生成失败：输出文件不存在（ffmpeg 可能把输出当输入）：${run.stderr}`);
