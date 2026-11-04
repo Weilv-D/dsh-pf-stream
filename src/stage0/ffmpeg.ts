@@ -23,12 +23,30 @@ export interface ExecOptions {
   encoding?: 'utf8' | 'buffer' | undefined;
 }
 
-export interface ExecResult {
-  stdout: string | Buffer;
+export interface ExecTextResult {
+  stdout: string;
   stderr: string;
   exitCode: number;
 }
 
+export interface ExecBufferResult {
+  stdout: Buffer;
+  stderr: string;
+  exitCode: number;
+}
+
+export type ExecResult = ExecTextResult | ExecBufferResult;
+
+export function execFile(
+  file: string,
+  args: string[],
+  options: ExecOptions & { encoding?: 'utf8' },
+): Promise<ExecTextResult>;
+export function execFile(
+  file: string,
+  args: string[],
+  options: ExecOptions & { encoding: 'buffer' },
+): Promise<ExecBufferResult>;
 export function execFile(file: string, args: string[], options: ExecOptions = {}): Promise<ExecResult> {
   const { timeoutMs, signal, encoding = 'utf8' } = options;
 
@@ -99,10 +117,11 @@ export function execFile(file: string, args: string[], options: ExecOptions = {}
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
-      const stdout = encoding === 'buffer' ? Buffer.concat(stdoutChunks) : Buffer.concat(stdoutChunks).toString('utf8');
+      const stdout: string | Buffer =
+        encoding === 'buffer' ? Buffer.concat(stdoutChunks) : Buffer.concat(stdoutChunks).toString('utf8');
       const stderr = Buffer.concat(stderrChunks).toString('utf8');
       if (exitCode === 0) {
-        resolve({ stdout, stderr, exitCode });
+        resolve({ stdout, stderr, exitCode } as ExecResult);
       } else {
         reject(
           new PfStreamError('PFSTREAM_EXEC_NONZERO', `${file} 退出码 ${exitCode}\nstderr 尾部：\n${tail(stderrChunks, stderrBytes)}`),

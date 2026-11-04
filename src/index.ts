@@ -11,9 +11,17 @@
 import Schema from '@deepseek-ai/schemastery';
 import type { Context } from '@deepseek-ai/cordis';
 import type { PfStreamPluginConfig } from './types.js';
-import { handleToolCall, type ProbeFn, type ToolCallArgs, type ToolExec, type ToolResult } from './tool/handler.js';
+import {
+  handleToolCall,
+  type InspectFn,
+  type ProbeFn,
+  type ToolCallArgs,
+  type ToolExec,
+  type ToolResult,
+} from './tool/handler.js';
 import { TOOL_NAME, TOOL_DESCRIPTION, toolOutputSchema, toolParameters } from './tool/schema.js';
 import { probeVideo } from './stage0/probe.js';
+import { runDeterministicInspection } from './stage3/deterministicRouter.js';
 import { resolveBinPaths } from './utils/ffmpegBin.js';
 
 export const name = 'dsh-pf-stream';
@@ -64,6 +72,15 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
   const bins = resolveBinPaths({ ffmpegPath: config.ffmpegPath, ffprobePath: config.ffprobePath });
   const probe: ProbeFn = (videoPath, signal) =>
     probeVideo(videoPath, { ffprobePath: bins.ffprobe, signal });
+  const inspect: InspectFn = (videoPath, probeResult, intent, signal) =>
+    runDeterministicInspection(videoPath, probeResult, intent, {
+      ffmpegPath: bins.ffmpeg,
+      renderVisualId: config.renderVisualId,
+      packetIdStart: 1,
+      globalIdStart: 1,
+      appliedIntentId: 'intent_1',
+      signal,
+    });
   return {
     name: TOOL_NAME,
     description: TOOL_DESCRIPTION,
@@ -80,7 +97,7 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
     // 会话级状态使并发不安全。
     isConcurrencySafe: () => false,
     async execute(args: ToolCallArgs, exec: ToolExec | undefined): Promise<ToolResult> {
-      return handleToolCall(args, exec, { probe });
+      return handleToolCall(args, exec, { probe, inspect });
     },
   };
 }

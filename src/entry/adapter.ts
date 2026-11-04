@@ -1,0 +1,136 @@
+/**
+ * 入口适配器：顶层调用参数 → 标准 IntentDirective（含校验与钳制）。
+ *
+ * 校验规则（《五…》§1.3）：枚举外值拒绝；pts_window/timestamps_ms 钳制 [0, last_pts_ms]；
+ * roi_hint 钳制 [0,1]；max_packets/max_tokens_budget 钳制到配置上限。
+ */
+
+import { PfStreamError } from '../errors.js';
+import type { DensityMode, FocusBias, IntentDirective, RoiHint, StreamAction } from '../types.js';
+import { normalizeLegacyArgs, type NormalizedIntent } from './legacyNormalizer.js';
+
+const ACTIONS: ReadonlySet<string> = new Set(['pf_stream', 'timestamps', 'uniform', 'probe']);
+const MODES: ReadonlySet<string> = new Set(['dense', 'standard', 'sparse']);
+const FOCUS: ReadonlySet<string> = new Set(['motion', 'detail', 'balanced']);
+
+export interface AdapterLimits {
+  lastPtsMs: number;
+  maxPackets: number;
+  maxTokensBudget: number;
+}
+
+export interface AdaptedCall {
+  intent: IntentDirective;
+  normalizedFrom: string[];
+  videoPath: string;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null;
+}
+
+function clampRoi(roi: RoiHint): RoiHint {
+  const x = Math.min(Math.max(roi.x, 0), 1);
+  const y = Math.min(Math.max(roi.y, 0), 1);
+  const w = Math.min(Math.max(roi.w, 1e-9), 1 - x);
+  const h = Math.min(Math.max(roi.h, 1e-9), 1 - y);
+  return { x, y, w, h };
+}
+
+/**
+ * 归一化入口参数。args 为宿主传入的工具参数（含顶层历史便捷字段与 intent）。
+ */
+export function adaptCallArgs(
+  args: Record<string, unknown>,
+  limits: AdapterLimits,
+): AdaptedCall {
+  const videoPath = args['video_path'];
+  if (typeof videoPath !== 'string' || videoPath.length === 0) {
+    throw new PfStreamError('PFSTREAM_ARGS_VIDEO_PATH', 'video_path 必须为非空字符串');
+  }
+
+  const legacy: NormalizedIntent = normalizeLegacyArgs(args, limits.lastPtsMs);
+  const rawIntent = isRecord(args['intent']) ? (args['intent'] as Record<string, unknown>) : {};
+
+  const intent: IntentDirective = {};
+
+  const action = (rawIntent['action'] ?? legacy.intent.action) as StreamAction | undefined;
+  if (action != null) {
+    if (!ACTIONS.has(action)) {
+      throw new PfStreamError('PFSTREAM_ARGS_ACTION', `action 枚举外值：${String(action)}`);
+    }
+    intent.action = action;
+  }
+
+  const mode = rawIntent['mode'] as DensityMode | undefined;
+  if (mode != null) {
+    if (!MODES.has(mode)) throw new PfStreamError('PFSTREAM_ARGS_MODE', `mode 枚举外值：${String(mode)}`);
+    intent.mode = mode;
+  }
+  const focus = rawIntent['focus'] as FocusBias | undefined;
+  if (focus != null) {
+    if (!FOCUS.has(focus)) throw new PfStreamError('PFSTREAM_ARGS_FOCUS', `focus 枚举外值：${String(focus)}`);
+    intent.focus = focus;
+  }
+
+  const roiRaw = (rawIntent['roi_hint'] ?? legacy.intent.roi_hint) as RoiHint | undefined;
+  if (roiRaw != null) {
+    intent.roi_hint = clampRoi(roiRaw);
+  }
+  if (rawIntent['full_frame'] === true) intent.full_frame = true;
+
+  const windowRaw = (rawIntent['pts_window'] ?? legacy.intent.pts_window) as [number, number] | undefined;
+  if (windowRaw != null) {
+    if (!Array.isArray(windowRaw) || windowRaw.length !== 2) {
+      throw new PfStreamError('PFSTREAM_ARGS_WINDOW', 'pts_window 必须为 [start_ms, end_ms]');
+    }
+    const w0 = clampMs(windowRaw[0], limits.lastPtsMs);
+    const w1 = clampMs(windowRaw[1], limits.lastPtsMs);
+    intent.pts_window = [Math.min(w0, w1), Math.max(w0, w1)];
+  }
+
+  const tsRaw = (rawIntent['timestamps_ms'] ?? legacy.intent.timestamps_ms) as number[] | undefined;
+  if (tsRaw != null) {
+    if (!Array.isArray(tsRaw) || tsRaw.length < 1) {
+      throw new PfStreamError('PFSTREAM_ARGS_TIMESTAMPS', 'timestamps_ms 必须为非空数组');
+    }
+    if (intent.action == null) intent.action = 'timestamps';
+    intent.timestamps_ms = tsRaw.map((t) => clampMs(t, limits.lastPtsMs));
+  }
+
+  const intervalRaw = (rawIntent['interval_ms'] ?? legacy.intent.interval_ms) as number | undefined;
+  if (intervalRaw != null) {
+    if (typeof intervalRaw !== 'number' || !(intervalRaw > 0)) {
+      throw new PfStreamError('PFSTREAM_ARGS_INTERVAL', 'interval_ms 必须为正数');
+    }
+    if (intent.action == null) intent.action = 'uniform';
+    intent.interval_ms = intervalRaw;
+  }
+
+  const fcRaw = (rawIntent['frame_count'] ?? legacy.intent.frame_count) as number | undefined;
+  if (fcRaw != null) {
+    if (typeof fcRaw !== 'number' || !(fcRaw >= 1)) {
+      throw new PfStreamError('PFSTREAM_ARGS_FRAME_COUNT', 'frame_count 必须为 ≥1 整数');
+    }
+    if (intent.action == null) intent.action = 'uniform';
+    intent.frame_count = Math.min(Math.round(fcRaw), 128);
+  }
+
+  const mpRaw = rawIntent['max_packets'] as number | undefined;
+  if (mpRaw != null && typeof mpRaw === 'number' && mpRaw >= 1) {
+    intent.max_packets = Math.min(Math.round(mpRaw), limits.maxPackets);
+  }
+  const mtbRaw = rawIntent['max_tokens_budget'] as number | undefined;
+  if (mtbRaw != null && typeof mtbRaw === 'number' && mtbRaw >= 274) {
+    intent.max_tokens_budget = Math.min(Math.round(mtbRaw), limits.maxTokensBudget);
+  }
+  if (rawIntent['reset'] === true) intent.reset = true;
+
+  return { intent, normalizedFrom: legacy.normalizedFrom, videoPath };
+}
+
+function clampMs(v: number, lastPtsMs: number): number {
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n)) throw new PfStreamError('PFSTREAM_ARGS_PTS', `PTS 值非法：${String(v)}`);
+  return Math.min(Math.max(Math.round(n), 0), lastPtsMs);
+}
