@@ -22,12 +22,36 @@ DeepSeek Harness（DSH）视频感知插件。模型用一个工具即可「看�
 
 ## 安装
 
-前置条件：
+### 1. 安装插件
 
-- DSH 宿主（Node ≥ 20）。
-- `ffmpeg` 与 `ffprobe` 可执行文件。定位顺序：插件配置路径 → `DSH_FFMPEG_PATH` / `FFMPEG_PATH` → `DSH_FFMPEG_DIR` → `~/.dsh/tools/ffmpeg/bin` → `~/.dsh/bin` → `PATH`。
+- 在 DSH 插件管理器中搜索 `dsh-pf-stream`，安装 **0.1.3 或更高版本**。
+- 或直接对智能体说「安装插件 dsh-pf-stream」，智能体经 plugin_manager 完成同一流程。
 
-在 DSH 插件管理器中安装包 `dsh-pf-stream`。宿主经 `dsh.bundle.patch`（`cordis.patch.yml`）挂载插件。peer 依赖 `@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 由宿主运行时解析。运行时直接依赖仅 `pngjs`；画布 PNG 编码参数固定，输出字节幂等。
+安装由宿主执行：宿主经 pnpm 安装包，读取 `cordis.patch.yml` 挂载插件。peer 依赖 `@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 由宿主运行时解析；运行时直接依赖仅 `pngjs`，画布 PNG 编码参数固定，输出字节幂等。
+
+版本说明：0.1.2 及更早版本的装载清单格式有误，宿主安装时报 `must be a top-level YAML array` 并回滚。0.1.3 起已修复。
+
+### 2. 准备 ffmpeg 与 ffprobe
+
+任选一种安装方式：
+
+```bash
+winget install Gyan.FFmpeg   # Windows
+brew install ffmpeg          # macOS
+sudo apt install ffmpeg      # Debian / Ubuntu
+```
+
+也可从 [ffmpeg.org](https://ffmpeg.org/download.html) 下载解压，用环境变量指向 `bin` 目录。可执行文件定位顺序：插件配置 `ffmpegPath` / `ffprobePath` → `DSH_FFMPEG_PATH` / `FFMPEG_PATH` → `DSH_FFMPEG_DIR` → `~/.dsh/tools/ffmpeg/bin` → `~/.dsh/bin` → `PATH`。
+
+### 3. 验证安装
+
+安装成功后，模型侧出现工具 `dsh-pf-stream`。用任一本地视频探测元数据：
+
+```json
+{ "video_path": "D:/videos/demo.mp4", "intent": { "action": "probe" } }
+```
+
+返回显示宽高、时长、帧率，即安装成功。
 
 ## 使用
 

@@ -22,12 +22,36 @@ One tool, `dsh-pf-stream`, routes through `intent.action`:
 
 ## Install
 
-Requirements:
+### 1. Install the plugin
 
-- DSH host (Node ≥ 20).
-- `ffmpeg` and `ffprobe` executables. Search order: plugin config path → `DSH_FFMPEG_PATH` / `FFMPEG_PATH` → `DSH_FFMPEG_DIR` → `~/.dsh/tools/ffmpeg/bin` → `~/.dsh/bin` → `PATH`.
+- Open the DSH plugin manager, search for `dsh-pf-stream`, and install **0.1.3 or later**.
+- Or tell the agent "install the plugin dsh-pf-stream"; the agent runs the same flow through plugin_manager.
 
-Install the package `dsh-pf-stream` in the DSH plugin manager. The host mounts the plugin through `dsh.bundle.patch` (`cordis.patch.yml`). Peer dependencies `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` resolve in the host runtime. The only runtime dependency is `pngjs`; canvas PNG encoding uses fixed parameters, so output bytes are deterministic.
+The host performs the install: it adds the package through pnpm and mounts the plugin from `cordis.patch.yml`. Peer dependencies `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` resolve in the host runtime. The only runtime dependency is `pngjs`; canvas PNG encoding uses fixed parameters, so output bytes are deterministic.
+
+Version note: versions 0.1.2 and earlier shipped a malformed loader manifest; the host rejects them with `must be a top-level YAML array` and rolls back. Fixed from 0.1.3.
+
+### 2. Prepare ffmpeg and ffprobe
+
+Pick one install method:
+
+```bash
+winget install Gyan.FFmpeg   # Windows
+brew install ffmpeg          # macOS
+sudo apt install ffmpeg      # Debian / Ubuntu
+```
+
+You can also download from [ffmpeg.org](https://ffmpeg.org/download.html), unpack, and point an environment variable at the `bin` directory. Executable search order: plugin config `ffmpegPath` / `ffprobePath` → `DSH_FFMPEG_PATH` / `FFMPEG_PATH` → `DSH_FFMPEG_DIR` → `~/.dsh/tools/ffmpeg/bin` → `~/.dsh/bin` → `PATH`.
+
+### 3. Verify the installation
+
+After installation the model-side tool `dsh-pf-stream` appears. Probe any local video:
+
+```json
+{ "video_path": "D:/videos/demo.mp4", "intent": { "action": "probe" } }
+```
+
+A response with display size, duration, and frame rate confirms a working installation.
 
 ## Usage
 
