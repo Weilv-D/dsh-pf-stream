@@ -140,32 +140,15 @@ jobs:
           path: pkg
 
       - name: 发布 tarball（Trusted Publishing + provenance）
-        run: npm publish "./pkg/dsh-pf-stream-${{ needs.guard.outputs.version }}.tgz" --provenance
-
-      - name: 发布后验证
         run: |
           VERSION="${{ needs.guard.outputs.version }}"
-          CHECK=""
-          LATEST=""
-          ATT=""
-          for i in $(seq 1 12); do
-            sleep 15
-            CHECK="$(npm view "dsh-pf-stream@$VERSION" version 2>/dev/null || true)"
-            LATEST="$(npm view dsh-pf-stream dist-tags.latest 2>/dev/null || true)"
-            ATT="$(npm view "dsh-pf-stream@$VERSION" attestations --json 2>/dev/null || true)"
-            if [ "$CHECK" = "$VERSION" ] && [ "$LATEST" = "$VERSION" ]; then
-              break
-            fi
-            echo "第 $i 次查询：registry 尚未就绪（version=$CHECK latest=$LATEST）"
-          done
-          if [ "$CHECK" != "$VERSION" ]; then
-            echo "::error::npm view dsh-pf-stream@$VERSION 未命中该精确版本（返回：$CHECK）"
-            exit 1
+          if curl -sf "https://registry.npmjs.org/dsh-pf-stream/$VERSION" > /dev/null; then
+            echo "registry 已存在 $VERSION，跳过发布（workflow 重跑幂等）"
+          else
+            npm publish "./pkg/dsh-pf-stream-$VERSION.tgz" --provenance
           fi
-          if [ "$LATEST" != "$VERSION" ]; then
-            echo "::error::dist-tags.latest = $LATEST，应为 $VERSION"
-            exit 1
-          fi
-          echo "版本命中：dsh-pf-stream@$VERSION"
-          echo "latest 指向：$VERSION"
-          echo "attestations：${ATT:-（registry 未就绪；provenance 以发布日志的 transparency log 链接为准）}"
+
+      - name: 发布后验证
+        run: node scripts/verify-release.mjs "$VERSION"
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
