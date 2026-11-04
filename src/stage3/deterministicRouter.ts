@@ -12,6 +12,8 @@
 import { decodePointWithFallback, decodeRangeStreaming } from '../stage0/decoder.js';
 import { packCanvas, timelineHintLine, type PacketArtifact } from '../stage4/canvasPacker.js';
 import { applyViewport, planViewport } from '../stage4/viewport.js';
+import { assertCanvasTokenLegal, encodedSizeOf } from '../stage6/precheck.js';
+import { PfStreamError } from '../errors.js';
 import type { RgbImage } from '../utils/image.js';
 import type { IntentDirective, ProbeResult } from '../types.js';
 import type { UnitInput } from '../stage4/canvasPacker.js';
@@ -22,6 +24,10 @@ export interface RouterOptions {
   packetIdStart: number;
   globalIdStart: number;
   appliedIntentId: string;
+  /** 请求字节水位（Base64 后口径；缺省不校验）。规格《六》§2 对 PATH_DETERMINISTIC 同样生效。 */
+  maxRequestBytes?: number | undefined;
+  /** 单图视觉 Token 上限（meteringProfile 口径；缺省不校验）。 */
+  maxTokensPerImage?: number | undefined;
   signal?: AbortSignal | undefined;
 }
 
@@ -183,7 +189,8 @@ export async function runDeterministicInspection(
   // 视窗计划（同组共享源帧参数，槽位不同）
   const groups = planGroups(targets, intent.focus, targets.length === 1 && intent.action === 'timestamps');
   const packets: PacketArtifact[] = [];
-  const hintLines: string[] = [];
+  // 提示行（let：字节水位截断时需同步移除对应行）
+  let hintLines: string[] = [];
   let globalId = options.globalIdStart;
   let packetId = options.packetIdStart;
   let targetIdx = 0;
@@ -223,6 +230,20 @@ export async function runDeterministicInspection(
     packets.push(artifact);
     hintLines.push(timelineHintLine(artifact.packet, intent.roi_hint ?? null));
     if (intent.max_packets != null && packets.length >= intent.max_packets) break;
+  }
+
+  // 预检（规格《六》§2 对 PATH_DETERMINISTIC 同样生效）：
+  // 单图 Token 上限逐包校验（违规即错误）；字节水位超限从尾部截断增量包。
+  if (options.maxTokensPerImage !== undefined) {
+    for (const p of packets) assertCanvasTokenLegal(p, options.maxTokensPerImage);
+  }
+  if (options.maxRequestBytes !== undefined) {
+    let total = packets.reduce((acc, p) => acc + encodedSizeOf(p.imageBytes), 0);
+    while (total > options.maxRequestBytes && packets.length > 0) {
+      const last = packets.pop()!;
+      total -= encodedSizeOf(last.imageBytes);
+      hintLines = hintLines.filter((l) => !l.includes(`Packet #${last.packet.packetId} `));
+    }
   }
 
   return { packets, hintLines, sampledPtsMs: targets };

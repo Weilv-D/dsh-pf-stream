@@ -31,6 +31,8 @@ export interface PrecheckOptions {
   maxTokensBudget: number;
   /** 多图降档门控（默认关）。 */
   imageCountTiersEnabled: boolean;
+  /** 单图视觉 Token 上限（meteringProfile.maxTokensPerImage，缺省不校验）。 */
+  maxTokensPerImage?: number | undefined;
 }
 
 export interface PrecheckResult {
@@ -60,11 +62,30 @@ export function assertCanvasEdgeLegal(artifact: PacketArtifact, tiersEnabled: bo
 }
 
 /**
+ * 单图 Token 上限校验（meteringProfile.maxTokensPerImage 消费点）：
+ * 计费序列 r×(c+1)+2 超过口径上限即错误——服务端会二次下采样破坏 42px 网格，
+ * 属契约级违规而非可降级超预算。PF-Stream 四形态画布最大 530 Token，
+ * 1024 口径下结构性合规；384 legacy 口径下 FORM_1/FORM_4 会在预检期拒绝。
+ */
+export function assertCanvasTokenLegal(artifact: PacketArtifact, maxTokensPerImage: number): void {
+  const tokens = billTokens(artifact.packet.canvasSize[0], artifact.packet.canvasSize[1]);
+  if (tokens > maxTokensPerImage) {
+    throw new PfStreamError(
+      'PFSTREAM_CANVAS_TOKEN_OVER_LIMIT',
+      `画布计费 ${tokens} Token 超过单图上限 ${maxTokensPerImage}（packet #${artifact.packet.packetId}）`,
+    );
+  }
+}
+
+/**
  * 预检与截断：输入按 [cold..., hot..., new...] 顺序排列的输出项。
  * 超限时按 规格 截断顺序丢弃，返回保留集与丢弃记录。
  */
 export function precheckBundle(items: BundleItem[], options: PrecheckOptions): PrecheckResult {
   for (const it of items) assertCanvasEdgeLegal(it.artifact, options.imageCountTiersEnabled);
+  if (options.maxTokensPerImage !== undefined) {
+    for (const it of items) assertCanvasTokenLegal(it.artifact, options.maxTokensPerImage);
+  }
 
   const tokensOf = (a: PacketArtifact) => billTokens(a.packet.canvasSize[0], a.packet.canvasSize[1]);
   const totalTokens = items.reduce((acc, it) => acc + tokensOf(it.artifact), 0);

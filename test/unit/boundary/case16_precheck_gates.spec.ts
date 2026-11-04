@@ -170,3 +170,64 @@ describe('case16: 预检截断顺序与 56MiB 水位', () => {
     expect(r.kept).toHaveLength(3);
   });
 });
+
+describe('case16: 单图 Token 上限（meteringProfile.maxTokensPerImage 消费点）', () => {
+  it('计费超上限的画布在预检期被拒绝（PFSTREAM_CANVAS_TOKEN_OVER_LIMIT）', () => {
+    // 2940×2940（70×70 超像素）→ 70×71+2 = 4972 Token > 1024
+    const items: BundleItem[] = [
+      { kind: 'new', artifact: syntheticArtifact([2940, 2940], 4096, true) },
+    ];
+    expect(() =>
+      precheckBundle(items, {
+        maxRequestBytes: 56 * 1024 * 1024,
+        maxPackets: 64,
+        maxTokensBudget: 65536,
+        imageCountTiersEnabled: false,
+        maxTokensPerImage: 1024,
+      }),
+    ).toThrowError();
+    try {
+      precheckBundle(items, {
+        maxRequestBytes: 56 * 1024 * 1024,
+        maxPackets: 64,
+        maxTokensBudget: 65536,
+        imageCountTiersEnabled: false,
+        maxTokensPerImage: 1024,
+      });
+    } catch (e) {
+      expect((e as { code?: string }).code).toBe('PFSTREAM_CANVAS_TOKEN_OVER_LIMIT');
+    }
+  });
+
+  it('1024 口径下四形态画布（最大 530 Token）结构性合规；384 legacy 口径下 FORM_1/FORM_4 被拒', () => {
+    const legal: BundleItem[] = [
+      { kind: 'new', artifact: syntheticArtifact([1344, 672], 4096, true) }, // FORM_1 530
+      { kind: 'new', artifact: syntheticArtifact([672, 672], 4096, false) }, // FORM_2 274
+    ];
+    expect(() =>
+      precheckBundle(legal, {
+        maxRequestBytes: 56 * 1024 * 1024,
+        maxPackets: 64,
+        maxTokensBudget: 65536,
+        imageCountTiersEnabled: false,
+        maxTokensPerImage: 1024,
+      }),
+    ).not.toThrowError();
+
+    const legacy: BundleItem[] = [
+      { kind: 'new', artifact: syntheticArtifact([1344, 672], 4096, true) }, // 530 > 384
+    ];
+    try {
+      precheckBundle(legacy, {
+        maxRequestBytes: 56 * 1024 * 1024,
+        maxPackets: 64,
+        maxTokensBudget: 65536,
+        imageCountTiersEnabled: false,
+        maxTokensPerImage: 384,
+      });
+      expect.unreachable('384 口径下 FORM_1 必须被拒');
+    } catch (e) {
+      expect((e as { code?: string }).code).toBe('PFSTREAM_CANVAS_TOKEN_OVER_LIMIT');
+    }
+  });
+});

@@ -32,6 +32,8 @@ export interface StreamCallOptions {
   /** Epoch Compaction 窗口（新包数）。 */
   epochCompactionWindow: number;
   imageCountTiersEnabled: boolean;
+  /** 单图视觉 Token 上限（meteringProfile 口径，缺省不校验）。 */
+  maxTokensPerImage?: number | undefined;
   signal?: AbortSignal | undefined;
 }
 
@@ -117,6 +119,7 @@ export async function runStreamCall(
     maxPackets: intent.max_packets ?? options.maxPacketsPerCall,
     maxTokensBudget: intent.max_tokens_budget ?? options.maxTokensBudgetPerCall,
     imageCountTiersEnabled: options.imageCountTiersEnabled,
+    maxTokensPerImage: options.maxTokensPerImage,
   });
 
   // 输出顺序：冷区（旧→新）→ 热区（旧→新）→ 增量（时序）

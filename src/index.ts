@@ -81,6 +81,8 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
       packetIdStart: 1,
       globalIdStart: 1,
       appliedIntentId: 'intent_1',
+      maxRequestBytes: config.maxRequestBytes,
+      maxTokensPerImage: config.meteringProfile.maxTokensPerImage,
       signal,
     });
   const stream: StreamFn = (videoPath, probeResult, intent, sessionId, signal) =>
@@ -95,6 +97,7 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
       maxColdRefs: config.maxColdRefs,
       epochCompactionWindow: config.epochCompactionWindow,
       imageCountTiersEnabled: config.meteringProfile.imageCountTiersEnabled,
+      maxTokensPerImage: config.meteringProfile.maxTokensPerImage,
       signal,
     });
   return {
