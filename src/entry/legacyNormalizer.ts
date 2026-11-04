@@ -51,6 +51,7 @@ export function normalizeLegacyArgs(
   args: Record<string, unknown>,
   durationMs: number,
   display: { width: number; height: number } = { width: 1, height: 1 },
+  maxFrames = 128,
 ): NormalizedIntent {
   const intent: IntentDirective = {};
   const normalizedFrom: string[] = [];
@@ -95,7 +96,7 @@ export function normalizeLegacyArgs(
   if (has('num_frames') || has('frame_count')) {
     const fc = Number(args['num_frames'] ?? args['frame_count']);
     if (Number.isFinite(fc) && fc >= 1) {
-      intent.frame_count = Math.min(Math.round(fc), 128);
+      intent.frame_count = Math.min(Math.round(fc), maxFrames);
       if (intent.action == null) intent.action = 'uniform';
       normalizedFrom.push('num_frames/frame_count');
     }

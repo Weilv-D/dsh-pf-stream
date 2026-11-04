@@ -15,7 +15,8 @@ describe('用例 5：单遍顺序解码与内存边界', () => {
     expect(result.telemetry.framesDecoded).toBeGreaterThanOrEqual(116);
     expect(result.telemetry.framesDecoded).toBeLessThanOrEqual(124);
     expect(result.telemetry.framesStepped).toBeGreaterThanOrEqual(result.telemetry.framesDecoded - 2);
-    expect(result.telemetry.stopReason).toBe('end_of_window');
+    // 窗口覆盖整流（4000ms 窗 ≥ 4s 视频）→ 窗口末端钳制到流末帧 → 流耗尽
+    expect(result.telemetry.stopReason).toBe('end_of_stream');
     expectPacketLegal(result);
   });
 

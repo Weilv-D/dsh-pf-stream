@@ -527,6 +527,11 @@ export async function runStreamPass(
     }
   }
 
+  // 窗口末端已钳制到流末帧（lastPtsMs）且无预算提前停止 → 流已耗尽。
+  if (stopReason === 'end_of_window' && w1 >= probe.lastPtsMs) {
+    stopReason = 'end_of_stream';
+  }
+
   return {
     packets,
     hintLines,

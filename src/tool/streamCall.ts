@@ -69,7 +69,38 @@ export interface StreamCallResult extends Omit<StreamRunResult, 'telemetry'> {
   appliedIntentId: string;
 }
 
-export async function runStreamCall(
+/**
+ * 会话级串行化：同一 sessionId 的流式调用按 promise 链排队执行。
+ *
+ * 会话状态（packetSeq/intentSeq/历史环/游标）为进程内存态，两次并发调用会读到
+ * 同一快照并各自分配相同序号（packetId 重复）。宿主侧 isConcurrencySafe=false
+ * 已声明串行语义，此队列作为插件内的第二道防线（防御直接并发调用 execute）。
+ */
+const sessionLocks = new Map<string, Promise<unknown>>();
+
+export function runStreamCall(
+  videoPath: string,
+  probe: ProbeResult,
+  intent: IntentDirective,
+  sessionId: string,
+  options: StreamCallOptions,
+): Promise<StreamCallResult> {
+  const tail = sessionLocks.get(sessionId) ?? Promise.resolve();
+  const task = tail
+    .catch(() => undefined)
+    .then(() => runStreamCallLocked(videoPath, probe, intent, sessionId, options));
+  const sentinel = task.then(
+    () => undefined,
+    () => undefined,
+  );
+  sessionLocks.set(sessionId, sentinel);
+  void sentinel.finally(() => {
+    if (sessionLocks.get(sessionId) === sentinel) sessionLocks.delete(sessionId);
+  });
+  return task;
+}
+
+async function runStreamCallLocked(
   videoPath: string,
   probe: ProbeResult,
   intent: IntentDirective,

@@ -11,7 +11,7 @@
  */
 
 import { decodePointWithFallback, decodeRangeStreaming } from '../stage0/decoder.js';
-import { packCanvas, timelineHintLine, type PacketArtifact } from '../stage4/canvasPacker.js';
+import { billTokens, packCanvas, timelineHintLine, type PacketArtifact } from '../stage4/canvasPacker.js';
 import { applyViewport, planViewport } from '../stage4/viewport.js';
 import { assertCanvasTokenLegal, encodedSizeOf } from '../stage6/precheck.js';
 import { PfStreamError } from '../errors.js';
@@ -30,6 +30,8 @@ export interface RouterOptions {
   maxRequestBytes?: number | undefined;
   /** 单图视觉 Token 上限（meteringProfile 口径；缺省不校验）。 */
   maxTokensPerImage?: number | undefined;
+  /** 单次调用视觉 Token 预算（意图层 max_tokens_budget，规格《五》§1.3；缺省不校验）。 */
+  maxTokensBudget?: number | undefined;
   signal?: AbortSignal | undefined;
 }
 
@@ -187,6 +189,8 @@ export async function runDeterministicInspection(
   let hintLines: string[] = [];
   let globalId = options.globalIdStart;
   let packetId = options.packetIdStart;
+  /** 已发出画布包的计费 Token 累计（意图层预算判定）。 */
+  let usedTokens = 0;
   const sampled: number[] = [];
 
   // 按块推进：每块 ≤CHUNK_TARGETS 个目标，块内帧打包后即释放，内存有界
@@ -282,6 +286,17 @@ export async function runDeterministicInspection(
         renderVisualId: options.renderVisualId,
         triggerPath: 'DETERMINISTIC',
       });
+      // 意图层预算（规格《五》§1.3）：即将超限的本包不发出，提前结束本次调用
+      // （与 pf_stream 通道 budget_tokens 同语义；首包即超限时返回空结果）。
+      // 预算源：RouterOptions 显式传入优先，否则回读意图层 max_tokens_budget
+      // （入口适配器已按配置上限钳制，与 intent.max_packets 同模式）。
+      const cost = billTokens(artifact.packet.canvasSize[0], artifact.packet.canvasSize[1]);
+      const budget = options.maxTokensBudget ?? intent.max_tokens_budget;
+      if (budget !== undefined && usedTokens + cost > budget) {
+        spanIdx = spans.length;
+        break;
+      }
+      usedTokens += cost;
       packets.push(artifact);
       hintLines.push(timelineHintLine(artifact.packet, intent.roi_hint ?? null));
       if (intent.max_packets != null && packets.length >= intent.max_packets) {

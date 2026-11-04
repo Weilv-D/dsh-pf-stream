@@ -19,6 +19,8 @@ export interface AdapterLimits {
   displayHeight: number;
   maxPackets: number;
   maxTokensBudget: number;
+  /** 确定性抽帧单次目标帧数上限（frame_count 钳制值）。 */
+  maxFrames: number;
 }
 
 export interface AdaptedCall {
@@ -54,7 +56,7 @@ export function adaptCallArgs(
   const legacy: NormalizedIntent = normalizeLegacyArgs(args, limits.lastPtsMs, {
     width: limits.displayWidth,
     height: limits.displayHeight,
-  });
+  }, limits.maxFrames);
   const rawIntent = isRecord(args['intent']) ? (args['intent'] as Record<string, unknown>) : {};
 
   const intent: IntentDirective = {};
@@ -118,16 +120,18 @@ export function adaptCallArgs(
       throw new PfStreamError('PFSTREAM_ARGS_FRAME_COUNT', 'frame_count 必须为 ≥1 整数');
     }
     if (intent.action == null) intent.action = 'uniform';
-    intent.frame_count = Math.min(Math.round(fcRaw), 128);
+    intent.frame_count = Math.min(Math.round(fcRaw), limits.maxFrames);
   }
 
+  // max_packets / max_tokens_budget：上下限双向钳制（规格《五》§1.3 上限钳制；
+  // 低于有效下限（1 包 / 274 Token）时钳到下限，与工具 Schema 的 minimum 声明一致。
   const mpRaw = rawIntent['max_packets'] as number | undefined;
-  if (mpRaw != null && typeof mpRaw === 'number' && mpRaw >= 1) {
-    intent.max_packets = Math.min(Math.round(mpRaw), limits.maxPackets);
+  if (mpRaw != null && typeof mpRaw === 'number' && Number.isFinite(mpRaw)) {
+    intent.max_packets = Math.min(Math.max(Math.round(mpRaw), 1), limits.maxPackets);
   }
   const mtbRaw = rawIntent['max_tokens_budget'] as number | undefined;
-  if (mtbRaw != null && typeof mtbRaw === 'number' && mtbRaw >= 274) {
-    intent.max_tokens_budget = Math.min(Math.round(mtbRaw), limits.maxTokensBudget);
+  if (mtbRaw != null && typeof mtbRaw === 'number' && Number.isFinite(mtbRaw)) {
+    intent.max_tokens_budget = Math.min(Math.max(Math.round(mtbRaw), 274), limits.maxTokensBudget);
   }
   if (rawIntent['reset'] === true) intent.reset = true;
 

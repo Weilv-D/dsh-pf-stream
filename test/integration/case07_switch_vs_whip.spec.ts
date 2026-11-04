@@ -30,6 +30,7 @@ describe('用例 7：硬切 vs 极速甩镜', () => {
     const result = await runFixtureStream('case07b_whip.mp4', await makeSlot(join(FIXTURES, 'case07b_whip.mp4')));
     expect(result.packets.filter((p) => p.packet.triggerPath === 'SWITCH_STATIC')).toHaveLength(0);
     expect(result.packets.length).toBeGreaterThanOrEqual(1); // 持续运动有 P 产出
-    expect(result.telemetry.stopReason).toBe('end_of_window');
+    // 默认窗口覆盖整流 → 窗口末端钳制到流末帧 → 流耗尽
+    expect(result.telemetry.stopReason).toBe('end_of_stream');
   });
 });

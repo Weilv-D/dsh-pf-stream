@@ -121,6 +121,7 @@ Session capabilities:
 | --- | --- | --- |
 | `renderVisualId` | `true` | superpixel inverse badge at each unit corner |
 | `maxPacketsPerCall` | `64` | packet count limit per call |
+| `maxFramesPerCall` | `128` | deterministic frame target limit per call (clamps `frame_count`) |
 | `maxTokensBudgetPerCall` | `65536` | vision-token budget per call |
 | `maxRequestBytes` | `56 MiB` | request byte watermark, Base64-inclusive |
 | `maxColdRefs` | `4` | cold-tier reference limit |

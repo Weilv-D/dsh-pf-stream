@@ -121,6 +121,7 @@ sudo apt install ffmpeg      # Debian / Ubuntu
 | --- | --- | --- |
 | `renderVisualId` | `true` | 单元左上角超像素反色角标 |
 | `maxPacketsPerCall` | `64` | 单次调用返回包数上限 |
+| `maxFramesPerCall` | `128` | 确定性抽帧单次目标帧数上限（`frame_count` 受此钳制） |
 | `maxImagesPerCall` | `20` | 单次调用回传图像上限（宿主单条消息图像上限 20） |
 | `maxTokensBudgetPerCall` | `65536` | 单次调用视觉 token 预算 |
 | `maxRequestBytes` | `56 MiB` | 请求字节软水位（Base64 后口径） |

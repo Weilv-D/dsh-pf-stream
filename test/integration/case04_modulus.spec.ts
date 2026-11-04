@@ -164,4 +164,47 @@ describe('case 4 — 打包器逐位一致性与字节幂等', () => {
     expect(a.hintLines).toEqual(b.hintLines);
     expect(a.sampledPtsMs).toEqual(b.sampledPtsMs);
   });
+
+  it('意图层 Token 预算在确定性通道生效：即将超限的本包不发出', async () => {
+    const probe = await probeVideo('test/fixtures/media/case04_plain.mp4', {
+      ffprobePath: bins.ffprobe,
+    });
+    const opts = {
+      ffmpegPath: bins.ffmpeg,
+      renderVisualId: false,
+      packetIdStart: 1,
+      globalIdStart: 1,
+      appliedIntentId: 'intent_1',
+    } as const;
+    // balanced uniform 500ms → FORM_1（530）逐包发出；预算 274 时首包即超限 → 空结果
+    const tight = await runDeterministicInspection(
+      'test/fixtures/media/case04_plain.mp4',
+      probe,
+      { action: 'uniform', interval_ms: 500, max_tokens_budget: 274 },
+      opts,
+    );
+    expect(tight.packets).toHaveLength(0);
+    // 预算 1060 → 恰好两包（530×2）后停止
+    const two = await runDeterministicInspection(
+      'test/fixtures/media/case04_plain.mp4',
+      probe,
+      { action: 'uniform', interval_ms: 500, max_tokens_budget: 1060 },
+      opts,
+    );
+    expect(two.packets.length).toBeLessThanOrEqual(2);
+    const total = two.packets.reduce(
+      (n, p) => n + billTokens(p.packet.canvasSize[0], p.packet.canvasSize[1]),
+      0,
+    );
+    expect(total).toBeLessThanOrEqual(1060);
+    // 单时间戳 detail（FORM_3，274）预算 274 → 恰好发出
+    const single = await runDeterministicInspection(
+      'test/fixtures/media/case04_plain.mp4',
+      probe,
+      { action: 'timestamps', timestamps_ms: [1200], focus: 'detail', max_tokens_budget: 274 },
+      opts,
+    );
+    expect(single.packets).toHaveLength(1);
+    expect(single.packets[0]!.packet.layoutForm).toBe('FORM_3_COMPACT_1F');
+  });
 });

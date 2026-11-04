@@ -39,6 +39,7 @@ export const DEFAULT_MAX_REQUEST_BYTES = 56 * 1024 * 1024;
 export const Config = Schema.object({
   renderVisualId: Schema.boolean().default(true).description('渲染超像素微型反色角标'),
   maxPacketsPerCall: Schema.number().default(64).description('单次调用画布包数上限'),
+  maxFramesPerCall: Schema.number().default(128).description('确定性抽帧单次目标帧数上限（frame_count 受此钳制）'),
   maxImagesPerCall: Schema.number().default(20).description('单次调用回传图像上限（宿主单条消息图像上限 20）'),
   maxTokensBudgetPerCall: Schema.number().default(65536).description('单次调用视觉 Token 预算上限（intent.max_tokens_budget 受此钳制）'),
   maxRequestBytes: Schema.number().default(DEFAULT_MAX_REQUEST_BYTES).description('请求字节软水位'),
@@ -181,6 +182,7 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
       appliedIntentId: 'intent_1',
       maxRequestBytes: config.maxRequestBytes,
       maxTokensPerImage: config.meteringProfile.maxTokensPerImage,
+      maxTokensBudget: intent.max_tokens_budget ?? config.maxTokensBudgetPerCall,
       signal,
     });
   const stream: StreamFn = (videoPath, probeResult, intent, sessionId, signal) =>
@@ -222,6 +224,7 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
         limits: {
           maxPackets: config.maxPacketsPerCall,
           maxTokensBudget: config.maxTokensBudgetPerCall,
+          maxFrames: config.maxFramesPerCall,
         },
       });
     },

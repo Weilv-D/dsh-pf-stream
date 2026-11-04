@@ -33,6 +33,7 @@ const LIMITS = {
   displayHeight: PROBE.displayHeight,
   maxPackets: 64,
   maxTokensBudget: 65536,
+  maxFrames: 128,
 };
 
 describe('toMs 判秒规则（≤2×时长判秒）', () => {
@@ -86,6 +87,30 @@ describe('adaptCallArgs：归一化 + 校验 + 钳制', () => {
       LIMITS,
     );
     expect(intent.max_packets).toBe(64);
+  });
+  it('max_packets 低于下限（0 / 负数）钳制到 1（Schema minimum:1 同口径）', () => {
+    const zero = adaptCallArgs({ video_path: 'v.mp4', intent: { max_packets: 0 } }, LIMITS);
+    const neg = adaptCallArgs({ video_path: 'v.mp4', intent: { max_packets: -5 } }, LIMITS);
+    expect(zero.intent.max_packets).toBe(1);
+    expect(neg.intent.max_packets).toBe(1);
+  });
+  it('max_tokens_budget 低于 274 钳制到 274，超上限钳制到配置值', () => {
+    const low = adaptCallArgs({ video_path: 'v.mp4', intent: { max_tokens_budget: 100 } }, LIMITS);
+    const high = adaptCallArgs({ video_path: 'v.mp4', intent: { max_tokens_budget: 999999 } }, LIMITS);
+    expect(low.intent.max_tokens_budget).toBe(274);
+    expect(high.intent.max_tokens_budget).toBe(65536);
+  });
+  it('frame_count 钳制到 limits.maxFrames（可配置，缺省 128）', () => {
+    const { intent } = adaptCallArgs(
+      { video_path: 'v.mp4', intent: { frame_count: 1000 } },
+      LIMITS,
+    );
+    expect(intent.frame_count).toBe(128);
+    const custom = adaptCallArgs(
+      { video_path: 'v.mp4', intent: { frame_count: 1000 } },
+      { ...LIMITS, maxFrames: 50 },
+    );
+    expect(custom.intent.frame_count).toBe(50);
   });
   it('pts_window 越界钳制并保持升序', () => {
     const { intent } = adaptCallArgs(

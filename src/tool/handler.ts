@@ -83,7 +83,7 @@ export interface ToolDeps {
   /** 宿主附件回传（可选：缺省时只返回画布元数据）。 */
   attachImages?: AttachImagesFn | undefined;
   /** 入口适配器钳制上限（缺省用插件默认配置值）。 */
-  limits?: { maxPackets: number; maxTokensBudget: number } | undefined;
+  limits?: { maxPackets: number; maxTokensBudget: number; maxFrames: number } | undefined;
 }
 
 export function resolveAction(args: ToolCallArgs): NonNullable<IntentDirective['action']> {
@@ -118,6 +118,7 @@ export async function handleToolCall(
     displayHeight: probeResult.displayHeight,
     maxPackets: deps.limits?.maxPackets ?? 64,
     maxTokensBudget: deps.limits?.maxTokensBudget ?? 65536,
+    maxFrames: deps.limits?.maxFrames ?? 128,
   });
   const action = intent.action ?? 'pf_stream';
 

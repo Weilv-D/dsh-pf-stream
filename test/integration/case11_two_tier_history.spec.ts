@@ -113,4 +113,36 @@ describe('case11: 两级历史引用流转', () => {
     expect(b2.nextCursor.lastConsumedPtsMs).toBe(a2.nextCursor.lastConsumedPtsMs);
     expect(b2.nextCursor.pendingPUnits.length).toBe(a2.nextCursor.pendingPUnits.length);
   }, 240_000);
+
+  it('同会话并发调用经会话锁串行化：新包 packetId 跨调用唯一', async () => {
+    const [a, b] = await Promise.all([
+      runStreamCallFixture('case05_motion.mp4', 'case11-conc', { pts_window: [0, 800] }, {}),
+      runStreamCallFixture('case05_motion.mp4', 'case11-conc', { pts_window: [800, 1600] }, {}),
+    ]);
+    // 每次调用自身输出内 packetId 唯一（预检门控契约）
+    for (const r of [a, b]) {
+      const own = r.packets.map((x) => x.packet.packetId);
+      expect(new Set(own).size).toBe(own.length);
+    }
+    // 未串行化时两次调用会各自从同一序号起点分配（新包 id 重复）；热区引用
+    // 重喂源包 id 属规格行为（《六》§3），故仅断言新包（initial）跨调用唯一。
+    const newIds = [...a.packets, ...b.packets]
+      .filter((x) => x.packet.historyMode === 'initial')
+      .map((x) => x.packet.packetId);
+    expect(newIds.length).toBeGreaterThan(0);
+    expect(new Set(newIds).size).toBe(newIds.length);
+    // 串行化证据：后完成的一次引用了先完成一次的包（full_strip_ref 存在）
+    expect([...a.packets, ...b.packets].some((x) => x.packet.historyMode !== 'initial')).toBe(true);
+  }, 240_000);
+
+  it('窗口末端钳制到流末帧时 stopReason=end_of_stream', async () => {
+    // case05_motion 时长 4s（lastPtsMs≈3966.67）：三次 1500ms 窗口后触底
+    await runStreamCallFixture('case05_motion.mp4', 'case11-eos', {}, { defaultStreamWindowMs: 1500 });
+    await runStreamCallFixture('case05_motion.mp4', 'case11-eos', {}, { defaultStreamWindowMs: 1500 });
+    const third = await runStreamCallFixture('case05_motion.mp4', 'case11-eos', {}, { defaultStreamWindowMs: 1500 });
+    expect(third.telemetry.window[1]).toBeGreaterThanOrEqual(3960);
+    expect(third.telemetry.stopReason).toBe('end_of_stream');
+    const fourth = await runStreamCallFixture('case05_motion.mp4', 'case11-eos', {}, { defaultStreamWindowMs: 1500 });
+    expect(fourth.telemetry.stopReason).toBe('end_of_stream');
+  }, 240_000);
 });

@@ -361,6 +361,8 @@ export interface MeteringProfile {
 export interface PfStreamPluginConfig {
   renderVisualId: boolean;
   maxPacketsPerCall: number;
+  /** 确定性抽帧（uniform frame_count）单次目标帧数上限。 */
+  maxFramesPerCall: number;
   /** 单次调用回传画布图像的上限（宿主单条消息图像上限 20）。 */
   maxImagesPerCall: number;
   maxTokensBudgetPerCall: number;
