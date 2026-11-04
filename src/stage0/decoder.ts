@@ -91,6 +91,8 @@ export async function probePtsIndex(
 
 export interface RangeDecodeOptions extends DecodePointOptions {
   workMaxEdge?: number | undefined;
+  /** 每次 ffmpeg 解码进程启动时回调（argv 快照），供单遍解码断言计数。 */
+  onFfmpegSpawn?: ((argv: string[]) => void) | undefined;
 }
 
 /**
@@ -204,6 +206,7 @@ export async function decodeRangeStreaming(
   const frameBytes = geometry.outW * geometry.outH * 3;
 
   const child = spawn(options.ffmpegPath, argv, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  options.onFfmpegSpawn?.(argv);
   const stderrChunks: Buffer[] = [];
   let stderrBytes = 0;
   child.stderr?.on('data', (chunk: Buffer) => {
@@ -274,7 +277,11 @@ export async function decodeRangeStreaming(
   return { frameCount: frameIndex, realigned };
 }
 
-/** 空帧回退解码：优先目标 PTS，空帧回退 lastPts，仍空则报错。 */
+/**
+ * 空帧回退解码（契约 3）：优先目标 PTS，空帧依次回退
+ * 调用方最后有效帧 → lastPtsMs → 半帧回退（PTS 毫秒取整进位会把
+ * -ss 目标推到末帧之后，回退 4ms 覆盖至 120fps 栅格），仍空则报错。
+ */
 export async function decodePointWithFallback(
   videoPath: string,
   ptsMs: number,
@@ -288,6 +295,10 @@ export async function decodePointWithFallback(
   if (ptsMs !== lastPtsMs) {
     const fallback = await decodePoint(videoPath, lastPtsMs, options);
     if (fallback) return fallback;
+  }
+  if (ptsMs > 0) {
+    const nudge = await decodePoint(videoPath, ptsMs - 4, options);
+    if (nudge) return nudge;
   }
   throw new PfStreamError('PFSTREAM_DECODE_EMPTY', `时间点 ${ptsMs}ms 无可解码帧`);
 }

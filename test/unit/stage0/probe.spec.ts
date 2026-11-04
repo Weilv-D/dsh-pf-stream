@@ -6,6 +6,7 @@
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { buildProbeResult, extractRotation, normalizeRotation, probeVideo, type FfprobeJson } from '../../../src/stage0/probe.js';
+import { runDeterministicInspection, resolveTargets } from '../../../src/stage3/deterministicRouter.js';
 import { estimateLastPtsMs, parseRational, secondsToMs } from '../../../src/utils/pts.js';
 import { resolveBinPaths } from '../../../src/utils/ffmpegBin.js';
 
@@ -107,6 +108,35 @@ describe('case 2 — 末尾 duration 避让（e2e + 纯函数）', () => {
     expect(result.durationMs).toBeGreaterThan(3000);
     expect(result.lastPtsMs).toBeLessThanOrEqual(result.durationMs);
     expect(result.lastPtsMs).toBeGreaterThan(2900);
+  });
+
+  it('timestamps 越界钳制：[-100, 2980, 99999] → [0, last_pts_ms]', async () => {
+    const probe = await probeVideo('test/fixtures/media/case02_plain.mp4', { ffprobePath: bins.ffprobe });
+    const targets = resolveTargets(
+      { action: 'timestamps', timestamps_ms: [-100, 2980, 99999] },
+      probe,
+    );
+    expect(targets).toEqual([0, probe.lastPtsMs]);
+  });
+
+  it('定点抽帧末尾避让：超出末帧的时间戳钳制到 last_pts_ms 并成功出包（空帧回退路径）', async () => {
+    const probe = await probeVideo('test/fixtures/media/case02_plain.mp4', { ffprobePath: bins.ffprobe });
+    const result = await runDeterministicInspection(
+      'test/fixtures/media/case02_plain.mp4',
+      probe,
+      { action: 'timestamps', timestamps_ms: [2990], focus: 'detail' },
+      {
+        ffmpegPath: bins.ffmpeg,
+        renderVisualId: false,
+        packetIdStart: 1,
+        globalIdStart: 1,
+        appliedIntentId: 'intent_1',
+      },
+    );
+    expect(result.sampledPtsMs).toEqual([probe.lastPtsMs]);
+    expect(result.packets).toHaveLength(1);
+    expect(result.packets[0].packet.layoutForm).toBe('FORM_3_COMPACT_1F');
+    expect(result.packets[0].packet.units[0].timestampMs).toBe(probe.lastPtsMs);
   });
 });
 

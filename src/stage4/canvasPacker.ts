@@ -13,6 +13,7 @@
 import { createHash } from 'node:crypto';
 import type { CanvasPacket, UnitDescriptor } from '../types.js';
 import { composeCanvas, encodePng, type RgbImage } from '../utils/image.js';
+import { contentHashOfRgb } from '../utils/hash.js';
 import { drawIdBadge, drawSeparators } from './markers.js';
 
 export type LayoutForm = CanvasPacket['layoutForm'];
@@ -34,6 +35,8 @@ export interface PacketArtifact {
   imageBytes: Buffer;
   /** F 独立载体 PNG 字节（FORM_1/4 含 F 时存在）。 */
   anchorBytes: Buffer | null;
+  /** F 载体规范化像素内容哈希（§6 降级轨；不含 F 时为 null）。 */
+  anchorFContentHash: string | null;
 }
 
 export interface PackOptions {
@@ -95,6 +98,7 @@ export function packCanvas(
   let anchorBytes: Buffer | null = null;
   let anchorFId: number | null = null;
   let anchorSha: string | null = null;
+  let anchorContentHash: string | null = null;
 
   const pUnits = units.filter((u) => u.scale === '1x1_P');
   const fUnits = units.filter((u) => u.scale === '2x2_F');
@@ -156,6 +160,7 @@ export function packCanvas(
     const fMarked = marked.find((u) => u.scale === '2x2_F')!;
     anchorBytes = encodePng(fMarked.image);
     anchorSha = sha256(anchorBytes);
+    anchorContentHash = contentHashOfRgb(fMarked.image.width, fMarked.image.height, fMarked.image.data);
   }
 
   const stripSha =
@@ -177,7 +182,7 @@ export function packCanvas(
     units: descriptors,
   };
 
-  return { packet, imageBytes, anchorBytes };
+  return { packet, imageBytes, anchorBytes, anchorFContentHash: anchorContentHash };
 }
 
 /** 时序提示行位置标签。 */

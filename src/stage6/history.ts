@@ -43,6 +43,7 @@ export function recordPackets(
       packet: a.packet,
       imageBytes: a.imageBytes,
       anchorBytes: a.anchorBytes,
+      anchorFContentHash: a.anchorFContentHash,
     });
     slot.epoch.pendingNew += 1;
     if (a.packet.anchorFId != null && a.anchorBytes) {
@@ -54,6 +55,7 @@ export function recordPackets(
         anchorFSha256: a.packet.anchorFSha256 ?? '',
         stripBytes: a.packet.layoutForm === 'FORM_3_COMPACT_1F' ? undefined : a.imageBytes,
         stripSha256: a.packet.stripSha256 ?? undefined,
+        contentHash: a.anchorFContentHash ?? undefined,
       });
     }
   }
@@ -86,7 +88,7 @@ export function buildColdRefPacket(plan: ColdRefPlan, appliedIntentId: string): 
       },
     ],
   };
-  return { packet, imageBytes: plan.bytes, anchorBytes: null };
+  return { packet, imageBytes: plan.bytes, anchorBytes: null, anchorFContentHash: plan.contentHash ?? null };
 }
 
 /** 冷区引用提示行（规格《六》§4 冷区历史引用格式）。 */
@@ -147,6 +149,7 @@ export function compactEpoch(
           eventType: fUnit.eventType,
           sourceCropBbox: fUnit.sourceCropBbox,
           bytes: entry.anchorBytes!,
+          contentHash: session.fUnitCache.get(p.anchorFId!)?.contentHash,
         },
       );
     }
@@ -170,7 +173,12 @@ export function compactEpoch(
 /** 热区引用：原条带字节原样重发，history_mode='full_strip_ref'。 */
 export function hotRefArtifact(entry: HistoryEntry): PacketArtifact {
   const packet: CanvasPacket = { ...entry.packet, historyMode: 'full_strip_ref' };
-  return { packet, imageBytes: entry.imageBytes, anchorBytes: entry.anchorBytes };
+  return {
+    packet,
+    imageBytes: entry.imageBytes,
+    anchorBytes: entry.anchorBytes,
+    anchorFContentHash: entry.anchorFContentHash,
+  };
 }
 
 /** 组装本轮输出引用（冷区 Epoch 引用 + 热区条带），顺序：冷区旧→新、热区旧→新。 */

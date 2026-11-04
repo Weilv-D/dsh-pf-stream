@@ -9,6 +9,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { runStreamCallFixture } from './helpers.js';
+import { contentHashOfRgb } from '../../src/utils/hash.js';
+import { PNG } from 'pngjs';
 
 const SESSION = 'case20-epoch';
 
@@ -75,5 +77,89 @@ describe('case20: Epoch Compaction', () => {
     expect(totalNew).toBeGreaterThanOrEqual(6);
     const cold4 = coldSnapshot(c4.packets);
     expect(cold4.size).toBeGreaterThan(0);
+  }, 300_000);
+
+  it('contentHash 降级轨（§6）：宿主重编码改变字节但像素相同时，规范化内容哈希保持一致', async () => {
+    // 模拟宿主重编码：同一 F 载体像素以不同 PNG filter 编码 → 字节不同、解码像素相同
+    const width = 64;
+    const height = 64;
+    const raw = Buffer.alloc(width * height * 3);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 3;
+        raw[i] = (x * 4) % 256;
+        raw[i + 1] = (y * 4) % 256;
+        raw[i + 2] = 128;
+      }
+    }
+
+    const encodeWithFilter = (filterType: number): Buffer => {
+      const png = new PNG({ width, height });
+      raw.copy(png.data);
+      return PNG.sync.write(png, { filterType });
+    };
+
+    const bytesA = encodeWithFilter(0); // None
+    const bytesB = encodeWithFilter(3); // Average
+    expect(bytesA.equals(bytesB)).toBe(false); // 前提：字节确实不同
+
+    // pngjs 解码为 RGBA；规范化为 rgb24 后与流式管线同口径
+    const rgbaToRgb = (rgba: Buffer): Buffer => {
+      const out = Buffer.alloc(width * height * 3);
+      for (let i = 0, j = 0; i < width * height; i++, j += 3) {
+        const k = i * 4;
+        out[j] = rgba[k];
+        out[j + 1] = rgba[k + 1];
+        out[j + 2] = rgba[k + 2];
+      }
+      return out;
+    };
+    const decodedA = rgbaToRgb(PNG.sync.read(bytesA).data);
+    const decodedB = rgbaToRgb(PNG.sync.read(bytesB).data);
+    // 规范化 RGB 后内容哈希一致 → 降级轨可跨宿主重编码去重
+    expect(contentHashOfRgb(width, height, decodedA)).toBe(
+      contentHashOfRgb(width, height, decodedB),
+    );
+    // 同字节幂等
+    expect(contentHashOfRgb(width, height, decodedA)).toBe(
+      contentHashOfRgb(width, height, decodedA),
+    );
+    // 像素差异 → 哈希不同
+    const mutated = Buffer.from(raw);
+    mutated[0] = (mutated[0] + 1) % 256;
+    expect(contentHashOfRgb(width, height, mutated)).not.toBe(
+      contentHashOfRgb(width, height, raw),
+    );
+  });
+
+  it('画布包回填 contentHash：含 F 的包 anchorFContentHash 非空且冷区引用与源包一致', async () => {
+    const s1 = await runStreamCallFixture('case14_slow.mp4', 'case20-hash', {}, { defaultStreamWindowMs: 1300 });
+    const s2 = await runStreamCallFixture('case14_slow.mp4', 'case20-hash', {}, { defaultStreamWindowMs: 1300 });
+    const s3 = await runStreamCallFixture('case14_slow.mp4', 'case20-hash', {}, { defaultStreamWindowMs: 1300 });
+
+    // 源包登记：anchorFId → contentHash
+    const hashAtFirst = new Map<number, string>();
+    for (const call of [s1, s2, s3]) {
+      for (const a of call.packets) {
+        if (a.packet.historyMode !== 'anchor_only_ref' && a.anchorFContentHash) {
+          if (!hashAtFirst.has(a.packet.anchorFId!)) {
+            hashAtFirst.set(a.packet.anchorFId!, a.anchorFContentHash);
+          }
+        }
+      }
+    }
+    expect(hashAtFirst.size).toBeGreaterThanOrEqual(1);
+
+    // 冷区引用的 contentHash 与源包一致（降级轨跨包一致性）
+    let coldSeen = 0;
+    for (const call of [s2, s3]) {
+      for (const a of call.packets) {
+        if (a.packet.historyMode === 'anchor_only_ref') {
+          expect(a.anchorFContentHash).toBe(hashAtFirst.get(a.packet.anchorFId!));
+          coldSeen++;
+        }
+      }
+    }
+    expect(coldSeen).toBeGreaterThanOrEqual(1);
   }, 300_000);
 });

@@ -176,6 +176,8 @@ export interface HistoryEntry {
   imageBytes: Buffer;
   /** F 独立载体字节（含 F 单元的包）。 */
   anchorBytes: Buffer | null;
+  /** F 载体规范化像素内容哈希（§6 降级轨；不含 F 时为 null）。 */
+  anchorFContentHash: string | null;
 }
 
 /** 发包历史环形队列：按包龄旧→新排列；热区为最近 2 包，冷区至多 maxColdRefs 包。 */
@@ -194,6 +196,8 @@ export interface ColdRefPlan {
   sourceCropBbox: [number, number, number, number];
   /** 与首次发包的独立载体逐字节一致。 */
   bytes: Buffer;
+  /** F 载体规范化像素内容哈希（§6 降级轨）。 */
+  contentHash?: string | undefined;
 }
 
 /** Epoch Compaction 状态：窗口内冷区引用零变动（前缀稳定）。 */

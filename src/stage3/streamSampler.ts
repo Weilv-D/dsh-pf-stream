@@ -78,6 +78,10 @@ export interface StreamTelemetry {
   framesDecoded: number;
   framesStepped: number;
   ptsRealign: number;
+  /** 每次 ffmpeg 解码进程的 argv 快照（单遍解码断言：计数=1、单次 -ss）。 */
+  ffmpegSpawns: string[][];
+  /** 运行期间同一时刻持有的 672 擂台槽位数峰值（单槽位约束：≤2 = MOTION 1 + SETTLE 1）。 */
+  arenaMaxHeld: number;
   window: [number, number];
   stopReason: 'budget_packets' | 'budget_tokens' | 'end_of_window' | 'end_of_stream';
   ctrlParams: StreamBaselines;
@@ -175,6 +179,8 @@ export async function runStreamPass(
   let ptsRealign = 0;
   let stopReason: StreamTelemetry['stopReason'] = 'end_of_window';
   let lastPtsOfWindow: number | null = null;
+  const ffmpegSpawns: string[][] = [];
+  let arenaMaxHeld = 0;
 
   const emit = (trigger: TriggerPath, withF = true): void => {
     const t0 = performance.now();
@@ -308,6 +314,7 @@ export async function runStreamPass(
         displayWidth: probe.displayWidth,
         displayHeight: probe.displayHeight,
         workMaxEdge: options.streamWorkMaxEdge,
+        onFfmpegSpawn: (argv) => ffmpegSpawns.push(argv.slice()),
         signal: options.signal,
       },
       (frame, ptsMs) => {
@@ -485,6 +492,9 @@ export async function runStreamPass(
         }
 
         rt.maxDSinceLastF = Math.max(rt.maxDSinceLastF, signal.d);
+        // 擂台单槽不变量观测：同一时刻持有的 672 槽位数（MOTION 擂台 + SETTLE 观察窗各 1）
+        const arenaHeld = (rt.motionArena !== null ? 1 : 0) + (rt.settleArena !== null ? 1 : 0);
+        if (arenaHeld > arenaMaxHeld) arenaMaxHeld = arenaHeld;
         perceiveMs += performance.now() - t0;
         lastPtsOfWindow = ptsMs;
 
@@ -514,6 +524,8 @@ export async function runStreamPass(
       framesDecoded,
       framesStepped,
       ptsRealign,
+      ffmpegSpawns,
+      arenaMaxHeld,
       window: [w0, w1],
       stopReason,
       ctrlParams: { ...ctrl.live },
@@ -613,6 +625,8 @@ function emptyTelemetry(
     framesDecoded: 0,
     framesStepped: 0,
     ptsRealign: 0,
+    ffmpegSpawns: [],
+    arenaMaxHeld: 0,
     window,
     stopReason,
     ctrlParams: baselines,

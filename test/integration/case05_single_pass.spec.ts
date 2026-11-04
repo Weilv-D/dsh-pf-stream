@@ -46,4 +46,17 @@ describe('用例 5：单遍顺序解码与内存边界', () => {
     expect(result.nextCursor.snapshot.state).toBe('STATIC');
     expect(result.nextCursor.lastConsumedPtsMs).toBeGreaterThan(3900);
   });
+
+  it('单遍契约：单次 ffmpeg spawn、至多一次 -ss 寻址、擂台槽位峰值 ≤2', async () => {
+    const slot = await makeSlot(join(FIXTURES, 'case05_motion.mp4'));
+    const result = await runFixtureStream('case05_motion.mp4', slot);
+    // 单遍顺序解码：整个流式窗口只 spawn 一次 ffmpeg（窗口起点对齐后顺序推进）
+    expect(result.telemetry.ffmpegSpawns).toHaveLength(1);
+    // 寻址只允许出现在 spawn 参数首部（对齐用），帧推进阶段零 -ss 重启
+    const ssCount = result.telemetry.ffmpegSpawns[0].filter((a) => a === '-ss').length;
+    expect(ssCount).toBeLessThanOrEqual(1);
+    // 单槽位擂台：MOTION 擂台与 SETTLE 观察窗各至多 1 个 672 槽位
+    expect(result.telemetry.arenaMaxHeld).toBeLessThanOrEqual(2);
+    expect(result.telemetry.arenaMaxHeld).toBeGreaterThanOrEqual(1);
+  });
 });

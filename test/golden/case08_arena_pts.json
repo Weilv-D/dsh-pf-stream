@@ -1,0 +1,132 @@
+[
+  {
+    "packetId": 1,
+    "layoutForm": "FORM_1_STANDARD_STRIP",
+    "triggerPath": "PEAK_FULL",
+    "anchorFId": 5,
+    "units": [
+      {
+        "globalId": 1,
+        "timestampMs": 700,
+        "scale": "1x1_P"
+      },
+      {
+        "globalId": 2,
+        "timestampMs": 733.333,
+        "scale": "1x1_P"
+      },
+      {
+        "globalId": 3,
+        "timestampMs": 800,
+        "scale": "1x1_P"
+      },
+      {
+        "globalId": 4,
+        "timestampMs": 833.333,
+        "scale": "1x1_P"
+      },
+      {
+        "globalId": 5,
+        "timestampMs": 733.333,
+        "scale": "2x2_F"
+      }
+    ]
+  },
+  {
+    "packetId": 2,
+    "layoutForm": "FORM_2_COMPACT_4P",
+    "triggerPath": "PEAK_FULL",
+    "anchorFId": null,
+    "units": [
+      {
+        "globalId": 6,
+        "timestampMs": 900,
+        "scale": "1x1_P"
+      },
+      {
+        "globalId": 7,
+        "timestampMs": 933.333,
+        "scale": "1x1_P"
+      },
+      {
+        "globalId": 8,
+        "timestampMs": 1000,
+        "scale": "1x1_P"
+      },
+      {
+        "globalId": 9,
+        "timestampMs": 1033.333,
+        "scale": "1x1_P"
+      }
+    ]
+  },
+  {
+    "packetId": 3,
+    "layoutForm": "FORM_2_COMPACT_4P",
+    "triggerPath": "PEAK_FULL",
+    "anchorFId": null,
+    "units": [
+      {
+        "globalId": 10,
+        "timestampMs": 1100,
+        "scale": "1x1_P"
+      },
+      {
+        "globalId": 11,
+        "timestampMs": 1133.3329999999999,
+        "scale": "1x1_P"
+      },
+      {
+        "globalId": 12,
+        "timestampMs": 1200,
+        "scale": "1x1_P"
+      },
+      {
+        "globalId": 13,
+        "timestampMs": 1233.333,
+        "scale": "1x1_P"
+      }
+    ]
+  },
+  {
+    "packetId": 4,
+    "layoutForm": "FORM_2_COMPACT_4P",
+    "triggerPath": "PEAK_FULL",
+    "anchorFId": null,
+    "units": [
+      {
+        "globalId": 14,
+        "timestampMs": 1300,
+        "scale": "1x1_P"
+      },
+      {
+        "globalId": 15,
+        "timestampMs": 1333.333,
+        "scale": "1x1_P"
+      },
+      {
+        "globalId": 16,
+        "timestampMs": 1400,
+        "scale": "1x1_P"
+      },
+      {
+        "globalId": 17,
+        "timestampMs": 1433.3329999999999,
+        "scale": "1x1_P"
+      }
+    ]
+  },
+  {
+    "packetId": 5,
+    "layoutForm": "FORM_3_COMPACT_1F",
+    "triggerPath": "SETTLE",
+    "anchorFId": 18,
+    "units": [
+      {
+        "globalId": 18,
+        "timestampMs": 2033.3329999999999,
+        "scale": "2x2_F"
+      }
+    ]
+  }
+]

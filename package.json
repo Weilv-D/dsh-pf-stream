@@ -13,6 +13,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "verify:host": "node scripts/verify-host-contract.mjs",
     "test": "vitest run --passWithNoTests"
   },
   "peerDependencies": {

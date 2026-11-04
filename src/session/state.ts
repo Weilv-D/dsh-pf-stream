@@ -9,7 +9,17 @@
 import { createHash } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { SessionIntent, SessionState, SessionVideoState, VideoFingerprint } from '../types.js';
+import type {
+  ArenaCandidate,
+  CanvasPacket,
+  ColdRefPlan,
+  SessionIntent,
+  SessionState,
+  SessionVideoState,
+  StateMachineSnapshot,
+  StreamCursor,
+  VideoFingerprint,
+} from '../types.js';
 
 /** 视频指纹：规范化路径 + size + mtime 联合哈希前 16 hex。 */
 export function fingerprintOf(videoPath: string): VideoFingerprint {
@@ -103,4 +113,223 @@ export function getSessionState(sessionId: string): SessionState {
 /** 测试辅助：清空进程内会话存储。 */
 export function resetMemorySessions(): void {
   memorySessions.clear();
+}
+
+/** 测试辅助：将重建的会话状态放回进程内存储（importSessionSnapshot 配套）。 */
+export function setMemorySession(state: SessionState): void {
+  memorySessions.set(state.sessionId, state);
+}
+
+// ---------------------------------------------------------------------------
+// 会话快照序列化（ADR-005 重建承诺）：Buffer→base64 的字段级往返，
+// 供进程重建一致性验证与宿主集成阶段的 storageDomain 落盘载荷复用。
+// ---------------------------------------------------------------------------
+
+interface SnapshotArena {
+  ptsMs: number;
+  rho: number;
+  g: number;
+  image672: string;
+  sourceCropBbox: [number, number, number, number];
+}
+
+interface SnapshotVideo {
+  fingerprint: VideoFingerprint;
+  lastConsumedPtsMs: number;
+  lastEmittedPacketPtsMs: number | null;
+  snapshot: Omit<StateMachineSnapshot, 'arena'> & { arena: SnapshotArena | null };
+  pendingPUnits: Array<{ ptsMs: number; image336: string; sourceCropBbox: [number, number, number, number] }>;
+  lastAnchorF: StreamCursor['lastAnchorF'];
+  history: {
+    packets: Array<{
+      packet: CanvasPacket;
+      imageBytes: string;
+      anchorBytes: string | null;
+      anchorFContentHash: string | null;
+    }>;
+  };
+  epoch: {
+    pendingNew: number;
+    coldRefs: Array<Omit<ColdRefPlan, 'bytes'> & { bytes: string; contentHash?: string | undefined }>;
+  };
+}
+
+interface SnapshotDoc {
+  version: 1;
+  sessionId: string;
+  intent: SessionIntent;
+  globalUnitSeq: number;
+  packetSeq: number;
+  intentSeq: number;
+  heartbeatSeq: number;
+  ctrlSeq: Array<[string, number]>;
+  fUnitCache: Array<{
+    anchorFId: number;
+    packetId: number;
+    ptsMs: number;
+    independentBytes: string;
+    anchorFSha256: string;
+    stripBytes?: string | undefined;
+    stripSha256?: string | undefined;
+    contentHash?: string | undefined;
+  }>;
+  videos: Array<[string, SnapshotVideo]>;
+}
+
+/** 导出会话快照（JSON 文本；Buffer 字段 base64 编码）。 */
+export function exportSessionSnapshot(state: SessionState): string {
+  const videos: Array<[string, SnapshotVideo]> = [];
+  for (const [key, slot] of state.videos) {
+    const c = slot.cursor;
+    videos.push([
+      key,
+      {
+        fingerprint: c.fingerprint,
+        lastConsumedPtsMs: c.lastConsumedPtsMs,
+        lastEmittedPacketPtsMs: c.lastEmittedPacketPtsMs,
+        snapshot: {
+          ...c.snapshot,
+          arena:
+            c.snapshot.arena == null
+              ? null
+              : {
+                  ptsMs: c.snapshot.arena.ptsMs,
+                  rho: c.snapshot.arena.rho,
+                  g: c.snapshot.arena.g,
+                  image672: c.snapshot.arena.image672.toString('base64'),
+                  sourceCropBbox: c.snapshot.arena.sourceCropBbox,
+                },
+        },
+        pendingPUnits: c.pendingPUnits.map((p) => ({
+          ptsMs: p.ptsMs,
+          image336: p.image336.toString('base64'),
+          sourceCropBbox: p.sourceCropBbox,
+        })),
+        lastAnchorF: c.lastAnchorF,
+        history: {
+          packets: slot.history.packets.map((h) => ({
+            packet: h.packet,
+            imageBytes: h.imageBytes.toString('base64'),
+            anchorBytes: h.anchorBytes ? h.anchorBytes.toString('base64') : null,
+            anchorFContentHash: h.anchorFContentHash,
+          })),
+        },
+        epoch: {
+          pendingNew: slot.epoch.pendingNew,
+          coldRefs: slot.epoch.coldRefs.map((r) => ({
+            refPacketId: r.refPacketId,
+            sourcePacketId: r.sourcePacketId,
+            anchorFId: r.anchorFId,
+            anchorFSha256: r.anchorFSha256,
+            ptsMs: r.ptsMs,
+            eventType: r.eventType,
+            sourceCropBbox: r.sourceCropBbox,
+            bytes: r.bytes.toString('base64'),
+            contentHash: r.contentHash,
+          })),
+        },
+      },
+    ]);
+  }
+  const doc: SnapshotDoc = {
+    version: 1,
+    sessionId: state.sessionId,
+    intent: state.intent,
+    globalUnitSeq: state.globalUnitSeq,
+    packetSeq: state.packetSeq,
+    intentSeq: state.intentSeq,
+    heartbeatSeq: state.heartbeatSeq,
+    ctrlSeq: [...state.ctrlSeq.entries()],
+    fUnitCache: [...state.fUnitCache.values()].map((e) => ({
+      anchorFId: e.anchorFId,
+      packetId: e.packetId,
+      ptsMs: e.ptsMs,
+      independentBytes: e.independentBytes.toString('base64'),
+      anchorFSha256: e.anchorFSha256,
+      stripBytes: e.stripBytes?.toString('base64'),
+      stripSha256: e.stripSha256,
+      contentHash: e.contentHash,
+    })),
+    videos,
+  };
+  return JSON.stringify(doc);
+}
+
+/** 从快照重建会话状态（exportSessionSnapshot 的逆操作）。 */
+export function importSessionSnapshot(json: string): SessionState {
+  const doc = JSON.parse(json) as SnapshotDoc;
+  if (doc.version !== 1) throw new Error(`不支持的会话快照版本：${doc.version}`);
+  const state = createSessionState(doc.sessionId);
+  state.intent = doc.intent;
+  state.globalUnitSeq = doc.globalUnitSeq;
+  state.packetSeq = doc.packetSeq;
+  state.intentSeq = doc.intentSeq;
+  state.heartbeatSeq = doc.heartbeatSeq;
+  state.ctrlSeq = new Map(doc.ctrlSeq);
+  state.fUnitCache = new Map(
+    doc.fUnitCache.map((e) => [
+      e.anchorFId,
+      {
+        anchorFId: e.anchorFId,
+        packetId: e.packetId,
+        ptsMs: e.ptsMs,
+        independentBytes: Buffer.from(e.independentBytes, 'base64'),
+        anchorFSha256: e.anchorFSha256,
+        stripBytes: e.stripBytes != null ? Buffer.from(e.stripBytes, 'base64') : undefined,
+        stripSha256: e.stripSha256,
+        contentHash: e.contentHash,
+      },
+    ]),
+  );
+  for (const [key, v] of doc.videos) {
+    state.videos.set(key, {
+      cursor: {
+        fingerprint: v.fingerprint,
+        lastConsumedPtsMs: v.lastConsumedPtsMs,
+        lastEmittedPacketPtsMs: v.lastEmittedPacketPtsMs,
+        snapshot: {
+          ...v.snapshot,
+          arena:
+            v.snapshot.arena == null
+              ? null
+              : {
+                  ptsMs: v.snapshot.arena.ptsMs,
+                  rho: v.snapshot.arena.rho,
+                  g: v.snapshot.arena.g,
+                  image672: Buffer.from(v.snapshot.arena.image672, 'base64'),
+                  sourceCropBbox: v.snapshot.arena.sourceCropBbox,
+                },
+        },
+        pendingPUnits: v.pendingPUnits.map((p) => ({
+          ptsMs: p.ptsMs,
+          image336: Buffer.from(p.image336, 'base64'),
+          sourceCropBbox: p.sourceCropBbox,
+        })),
+        lastAnchorF: v.lastAnchorF,
+      },
+      history: {
+        packets: v.history.packets.map((h) => ({
+          packet: h.packet,
+          imageBytes: Buffer.from(h.imageBytes, 'base64'),
+          anchorBytes: h.anchorBytes != null ? Buffer.from(h.anchorBytes, 'base64') : null,
+          anchorFContentHash: h.anchorFContentHash,
+        })),
+      },
+      epoch: {
+        pendingNew: v.epoch.pendingNew,
+        coldRefs: v.epoch.coldRefs.map((r) => ({
+          refPacketId: r.refPacketId,
+          sourcePacketId: r.sourcePacketId,
+          anchorFId: r.anchorFId,
+          anchorFSha256: r.anchorFSha256,
+          ptsMs: r.ptsMs,
+          eventType: r.eventType,
+          sourceCropBbox: r.sourceCropBbox,
+          bytes: Buffer.from(r.bytes, 'base64'),
+          contentHash: r.contentHash,
+        })),
+      },
+    });
+  }
+  return state;
 }

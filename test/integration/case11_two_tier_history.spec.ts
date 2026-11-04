@@ -10,6 +10,13 @@
 
 import { describe, expect, it } from 'vitest';
 import { runStreamCallFixture } from './helpers.js';
+import {
+  exportSessionSnapshot,
+  getSessionState,
+  importSessionSnapshot,
+  resetMemorySessions,
+  setMemorySession,
+} from '../../src/session/state.js';
 
 const SESSION = 'case11-two-tier';
 
@@ -77,5 +84,33 @@ describe('case11: 两级历史引用流转', () => {
     expect(third.hotRefCount).toBe(
       packets.filter((p) => p.historyMode === 'full_strip_ref').length,
     );
+  }, 240_000);
+
+  it('进程重建一致性（ADR-005）：快照导出→清空→导入后续流输出与不重建完全一致', async () => {
+    // 对照组：连续两次调用（不重建）
+    const a1 = await runStreamCallFixture('case05_motion.mp4', 'case11-rebuild-a', {}, { defaultStreamWindowMs: 1500 });
+    const a2 = await runStreamCallFixture('case05_motion.mp4', 'case11-rebuild-a', {}, { defaultStreamWindowMs: 1500 });
+
+    // 实验组：第一次调用后导出快照，清空内存，导入重建后续流
+    await runStreamCallFixture('case05_motion.mp4', 'case11-rebuild-b', {}, { defaultStreamWindowMs: 1500 });
+    const snapshotJson = exportSessionSnapshot(getSessionState('case11-rebuild-b'));
+    resetMemorySessions();
+    setMemorySession(importSessionSnapshot(snapshotJson));
+    const b2 = await runStreamCallFixture('case05_motion.mp4', 'case11-rebuild-b', {}, { defaultStreamWindowMs: 1500 });
+
+    const digestOf = (r: typeof a2) =>
+      r.packets.map((a) => ({
+        packetId: a.packet.packetId,
+        layoutForm: a.packet.layoutForm,
+        historyMode: a.packet.historyMode,
+        anchorFId: a.packet.anchorFId,
+        stripSha256: a.packet.stripSha256,
+        imageBytes: a.imageBytes.toString('base64'),
+      }));
+    expect(digestOf(b2)).toEqual(digestOf(a2));
+    // 提示行与采样 PTS 一致
+    expect(b2.hintLines).toEqual(a2.hintLines);
+    expect(b2.nextCursor.lastConsumedPtsMs).toBe(a2.nextCursor.lastConsumedPtsMs);
+    expect(b2.nextCursor.pendingPUnits.length).toBe(a2.nextCursor.pendingPUnits.length);
   }, 240_000);
 });
