@@ -24,12 +24,10 @@ One tool, `dsh-pf-stream`, routes through `intent.action`:
 
 ### 1. Install the plugin
 
-- Open the DSH plugin manager, search for `dsh-pf-stream`, and install **0.1.3 or later**.
+- Open the DSH plugin manager, search for `dsh-pf-stream`, and install the latest version.
 - Or tell the agent "install the plugin dsh-pf-stream"; the agent runs the same flow through plugin_manager.
 
 The host performs the install: it adds the package through pnpm and mounts the plugin from `cordis.patch.yml`. Peer dependencies `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` resolve in the host runtime. The only runtime dependency is `pngjs`; canvas PNG encoding uses fixed parameters, so output bytes are deterministic.
-
-Version note: versions 0.1.2 and earlier shipped a malformed loader manifest; the host rejects them with `must be a top-level YAML array` and rolls back. Fixed from 0.1.3.
 
 ### 2. Prepare ffmpeg and ffprobe
 

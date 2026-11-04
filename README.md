@@ -24,12 +24,10 @@ DeepSeek Harness（DSH）视频感知插件。模型用一个工具即可「看�
 
 ### 1. 安装插件
 
-- 在 DSH 插件管理器中搜索 `dsh-pf-stream`，安装 **0.1.3 或更高版本**。
+- 在 DSH 插件管理器中搜索 `dsh-pf-stream`，安装最新版本。
 - 或直接对智能体说「安装插件 dsh-pf-stream」，智能体经 plugin_manager 完成同一流程。
 
 安装由宿主执行：宿主经 pnpm 安装包，读取 `cordis.patch.yml` 挂载插件。peer 依赖 `@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 由宿主运行时解析；运行时直接依赖仅 `pngjs`，画布 PNG 编码参数固定，输出字节幂等。
-
-版本说明：0.1.2 及更早版本的装载清单格式有误，宿主安装时报 `must be a top-level YAML array` 并回滚。0.1.3 起已修复。
 
 ### 2. 准备 ffmpeg 与 ffprobe
 
