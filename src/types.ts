@@ -72,7 +72,7 @@ export interface SessionIntent {
   intentId: string;
   mode: DensityMode;
   focus: FocusBias;
-  roiHint?: RoiHint;
+  roiHint?: RoiHint | undefined;
   fullFrame: boolean;
 }
 
@@ -211,6 +211,16 @@ export interface StateMachineSnapshot {
   lastKCandidates: number[] | null;
   lastMotionVec: [number, number] | null;
   arena: ArenaCandidate | null;
+  // M2 扩展：合并窗 / 静态观察 / F_switch / R4 等采样器运行时状态
+  mergeStartPtsMs?: number | null;
+  switchStaticSincePtsMs?: number | null;
+  fSwitchPending?: boolean;
+  clarityWarmupLeft?: number;
+  rhoHistory?: number[];
+  motionEnteredAtPtsMs?: number | null;
+  maxDSinceLastF?: number;
+  lastHeartbeatPtsMs?: number | null;
+  r4Active?: boolean;
 }
 
 export interface PendingPUnit {

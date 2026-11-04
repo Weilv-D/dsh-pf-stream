@@ -1,14 +1,15 @@
 /**
  * 会话状态（SessionState / StreamCursor / LRU 管理）。
  *
- * M1 范围：会话聚合骨架与 LRU 上限（2 个视频/会话）；游标快照与 FUnitCache
- * 在 M2/M4 接入（ADR-005 持久化承诺）。持久层（storageDomain）在 M4 接入。
+ * LRU 上限（2 个视频/会话）：每视频驻留状态约 1MB 量级
+ * （单槽位擂台图 ~450KB + 待发 P 队列），会话内存占用有界。
+ * M2 为进程内内存态；持久层（storageDomain）在 M4 接入（ADR-005）。
  */
 
 import { createHash } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { SessionIntent, SessionState, VideoFingerprint } from '../types.js';
+import type { SessionIntent, SessionState, SessionVideoState, VideoFingerprint } from '../types.js';
 
 /** 视频指纹：规范化路径 + size + mtime 联合哈希前 16 hex。 */
 export function fingerprintOf(videoPath: string): VideoFingerprint {
@@ -47,13 +48,15 @@ export function createSessionState(sessionId: string): SessionState {
 export const VIDEO_LRU_LIMIT = 2;
 
 /** 取视频槽位（不存在则创建）；超过上限淘汰最旧未使用槽位。 */
-export function getVideoSlot(
-  state: SessionState,
-  fingerprint: VideoFingerprint,
-): NonNullable<SessionState['videos'] extends Map<string, infer V> ? V : never> {
+export function getVideoSlot(state: SessionState, fingerprint: VideoFingerprint): SessionVideoState {
   const key = fingerprint.sha256Short;
   const existing = state.videos.get(key);
-  if (existing) return existing;
+  if (existing) {
+    // LRU 触达：移到 Map 尾部（最新）
+    state.videos.delete(key);
+    state.videos.set(key, existing);
+    return existing;
+  }
   while (state.videos.size >= VIDEO_LRU_LIMIT) {
     const oldest = state.videos.keys().next().value;
     if (oldest == null) break;
@@ -82,4 +85,21 @@ export function getVideoSlot(
   };
   state.videos.set(key, slot);
   return slot;
+}
+
+/** M2 进程内会话存储（key = sessionId）；M4 换 storageDomain 持久层。 */
+const memorySessions = new Map<string, SessionState>();
+
+export function getSessionState(sessionId: string): SessionState {
+  let state = memorySessions.get(sessionId);
+  if (!state) {
+    state = createSessionState(sessionId);
+    memorySessions.set(sessionId, state);
+  }
+  return state;
+}
+
+/** 测试辅助：清空进程内会话存储。 */
+export function resetMemorySessions(): void {
+  memorySessions.clear();
 }

@@ -9,6 +9,7 @@
 import type { IntentDirective, LegacyInspectionParams, ProbeResult } from '../types.js';
 import { PfStreamError } from '../errors.js';
 import type { InspectionResult } from '../stage3/deterministicRouter.js';
+import type { StreamCallResult } from './streamCall.js';
 
 export { PfStreamError } from '../errors.js';
 
@@ -20,6 +21,8 @@ export interface ToolCallArgs {
 
 export interface ToolExec {
   signal: AbortSignal;
+  /** 宿主会话标识（缺省聚合到 'default'）。 */
+  sessionId?: string | undefined;
 }
 
 export type ToolResult = Record<string, unknown>;
@@ -35,9 +38,19 @@ export type InspectFn = (
   signal: AbortSignal | undefined,
 ) => Promise<InspectionResult>;
 
+/** 流式通道实现，由插件入口注入。 */
+export type StreamFn = (
+  videoPath: string,
+  probe: ProbeResult,
+  intent: IntentDirective,
+  sessionId: string | undefined,
+  signal: AbortSignal | undefined,
+) => Promise<StreamCallResult>;
+
 export interface ToolDeps {
   probe: ProbeFn;
   inspect?: InspectFn | undefined;
+  stream?: StreamFn | undefined;
 }
 
 export function resolveAction(args: ToolCallArgs): NonNullable<IntentDirective['action']> {
@@ -68,6 +81,23 @@ export async function handleToolCall(
       probe: probeResult,
       packets: inspection.packets.map((p) => p.packet),
       hintLines: inspection.hintLines,
+    };
+  }
+  if (action === 'pf_stream') {
+    if (!deps.stream) {
+      throw new PfStreamError('PFSTREAM_ACTION_UNAVAILABLE', `action '${action}' 通道不可用`);
+    }
+    const probeResult = await deps.probe(args.video_path, exec?.signal);
+    const intent = (args.intent ?? {}) as IntentDirective;
+    const stream = await deps.stream(args.video_path, probeResult, intent, exec?.sessionId, exec?.signal);
+    return {
+      action: 'pf_stream',
+      probe: probeResult,
+      packets: stream.packets.map((p) => p.packet),
+      hintLines: stream.hintLines,
+      heartbeats: stream.heartbeats,
+      telemetry: stream.telemetry,
+      session: { intentId: stream.sessionIntentId },
     };
   }
   throw new PfStreamError('PFSTREAM_ACTION_UNAVAILABLE', `action '${action}' 通道不可用`);

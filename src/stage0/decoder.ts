@@ -6,8 +6,12 @@
  * - 批量退化：目标数 ≥32 且平均间隔 ≤2s 时，排序后单遍区间解码摊薄寻址开销；
  * - 空帧回退：解码端空输出时回退复用最后一个有效解码帧（契约 3）；
  * - 解码输出天然处于显示坐标系（ffmpeg 默认 autorotate）。
+ *
+ * decodeRangeStreaming 为单遍流式消费（契约 3：每帧解码后同步派生感知图，
+ * 当场裁剪缩放入队并释放原图；await onFrame 期间 stdout 异步迭代自动背压）。
  */
 
+import { spawn } from 'node:child_process';
 import { PfStreamError } from '../errors.js';
 import type { RgbImage } from '../utils/image.js';
 import { execFile } from './ffmpeg.js';
@@ -76,7 +80,8 @@ export async function probePtsIndex(
   for (const f of parsed.frames ?? []) {
     const t = f.pts_time;
     if (t == null) continue;
-    entries.push({ frameIndex: entries.length, ptsMs: Math.round(Number.parseFloat(t) * 1000) });
+    // 保留亚毫秒精度：30fps 帧距 33.333ms，取整到 33ms 会低于 33.3 步进门
+    entries.push({ frameIndex: entries.length, ptsMs: Number.parseFloat(t) * 1000 });
   }
   return entries;
 }
@@ -98,42 +103,20 @@ export async function decodeRange(
 ): Promise<Array<{ ptsMs: number; image: RgbImage }>> {
   const index = await probePtsIndexExec(options, videoPath, window0Ms, window1Ms);
   if (index.length === 0) return [];
-  const vf: string[] = [];
-  let outW = options.displayWidth;
-  let outH = options.displayHeight;
-  const maxEdge = options.workMaxEdge ?? 0;
-  if (maxEdge > 0 && Math.max(options.displayWidth, options.displayHeight) > maxEdge) {
-    const k = maxEdge / Math.max(options.displayWidth, options.displayHeight);
-    outW = Math.max(2, Math.round(options.displayWidth * k) & ~1);
-    outH = Math.max(2, Math.round(options.displayHeight * k) & ~1);
-    vf.push(`scale=${outW}:${outH}`);
-  }
-  const durationSec = ((window1Ms - window0Ms) / 1000 + 1.0).toFixed(3);
-  const argv = [
-    '-hide_banner',
-    '-loglevel', 'error',
-    '-ss', (window0Ms / 1000).toFixed(3),
-    '-i', videoPath,
-    '-t', durationSec,
-    '-an', '-sn', '-dn',
-    '-fps_mode', 'passthrough',
-    ...(vf.length > 0 ? ['-vf', vf.join(',')] : []),
-    '-f', 'rawvideo',
-    '-pix_fmt', 'rgb24',
-    'pipe:1',
-  ];
+  const geometry = rangeOutputGeometry(options);
+  const argv = rangeArgv(videoPath, window0Ms, window1Ms, geometry);
   const { stdout } = await execFile(options.ffmpegPath, argv, {
     signal: options.signal,
     encoding: 'buffer',
   });
-  const frameBytes = outW * outH * 3;
+  const frameBytes = geometry.outW * geometry.outH * 3;
   const frameCount = Math.floor(stdout.length / frameBytes);
   const frames: Array<{ ptsMs: number; image: RgbImage }> = [];
   for (let i = 0; i < frameCount; i++) {
     const ptsMs = index[Math.min(i, index.length - 1)]!.ptsMs;
     const image: RgbImage = {
-      width: outW,
-      height: outH,
+      width: geometry.outW,
+      height: geometry.outH,
       data: stdout.subarray(i * frameBytes, (i + 1) * frameBytes),
     };
     frames.push({ ptsMs, image });
@@ -151,6 +134,141 @@ async function probePtsIndexExec(
   // ffprobe 路径与 ffmpeg 同目录约定：入口适配层保证成对解析
   const ffprobe = options.ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
   return probePtsIndex(ffprobe, videoPath, w0, w1, options.signal);
+}
+
+/** 区间解码输出几何（workMaxEdge 等比上限）。 */
+function rangeOutputGeometry(options: RangeDecodeOptions): {
+  outW: number;
+  outH: number;
+  vf: string[];
+} {
+  const vf: string[] = [];
+  let outW = options.displayWidth;
+  let outH = options.displayHeight;
+  const maxEdge = options.workMaxEdge ?? 0;
+  if (maxEdge > 0 && Math.max(options.displayWidth, options.displayHeight) > maxEdge) {
+    const k = maxEdge / Math.max(options.displayWidth, options.displayHeight);
+    outW = Math.max(2, Math.round(options.displayWidth * k) & ~1);
+    outH = Math.max(2, Math.round(options.displayHeight * k) & ~1);
+    vf.push(`scale=${outW}:${outH}`);
+  }
+  return { outW, outH, vf };
+}
+
+function rangeArgv(
+  videoPath: string,
+  window0Ms: number,
+  window1Ms: number,
+  geometry: { outW: number; outH: number; vf: string[] },
+): string[] {
+  const durationSec = ((window1Ms - window0Ms) / 1000 + 1.0).toFixed(3);
+  return [
+    '-hide_banner',
+    '-loglevel', 'error',
+    '-ss', (window0Ms / 1000).toFixed(3),
+    '-i', videoPath,
+    '-t', durationSec,
+    '-an', '-sn', '-dn',
+    '-fps_mode', 'passthrough',
+    ...(geometry.vf.length > 0 ? ['-vf', geometry.vf.join(',')] : []),
+    '-f', 'rawvideo',
+    '-pix_fmt', 'rgb24',
+    'pipe:1',
+  ];
+}
+
+export interface StreamDecodeResult {
+  frameCount: number;
+  /** 帧序号超出 PTS 索引长度时按最近 PTS 钳制的帧数。 */
+  realigned: number;
+}
+
+/**
+ * 单遍流式区间解码：stdout 逐帧切片回调，原始字节不整体驻留。
+ * onFrame 抛错时终止子进程并向上传播。
+ */
+export async function decodeRangeStreaming(
+  videoPath: string,
+  window0Ms: number,
+  window1Ms: number,
+  options: RangeDecodeOptions,
+  onFrame: (image: RgbImage, ptsMs: number) => Promise<void> | void,
+): Promise<StreamDecodeResult> {
+  const index = await probePtsIndexExec(options, videoPath, window0Ms, window1Ms);
+  if (index.length === 0) return { frameCount: 0, realigned: 0 };
+  const geometry = rangeOutputGeometry(options);
+  const argv = rangeArgv(videoPath, window0Ms, window1Ms, geometry);
+  const frameBytes = geometry.outW * geometry.outH * 3;
+
+  const child = spawn(options.ffmpegPath, argv, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const stderrChunks: Buffer[] = [];
+  let stderrBytes = 0;
+  child.stderr?.on('data', (chunk: Buffer) => {
+    if (stderrBytes < 64 * 1024) {
+      stderrChunks.push(chunk);
+      stderrBytes += chunk.length;
+    }
+  });
+
+  let pending: Buffer | null = null;
+  let frameIndex = 0;
+  let realigned = 0;
+  let killed = false;
+  let indexExhausted = false;
+
+  const exited = new Promise<number | null>((resolveExit, rejectExit) => {
+    child.once('error', rejectExit);
+    child.once('close', (code) => resolveExit(code));
+  });
+
+  try {
+    for await (const chunk of child.stdout!) {
+      pending = pending ? Buffer.concat([pending, chunk as Buffer]) : (chunk as Buffer);
+      while (pending && pending.length >= frameBytes) {
+        if (frameIndex >= index.length) {
+          // 索引耗尽：解码裕量产出的 surplus 帧位于窗口之外，丢弃并终止解码。
+          indexExhausted = true;
+          break;
+        }
+        const image: RgbImage = {
+          width: geometry.outW,
+          height: geometry.outH,
+          data: pending.subarray(0, frameBytes),
+        };
+        await onFrame(image, index[frameIndex]!.ptsMs);
+        pending = pending.length > frameBytes ? pending.subarray(frameBytes) : null;
+        frameIndex++;
+      }
+      if (indexExhausted) {
+        killed = true;
+        child.kill();
+        break;
+      }
+      if (options.signal?.aborted) break;
+    }
+  } catch (error) {
+    killed = true;
+    child.kill();
+    throw error;
+  }
+
+  if (options.signal?.aborted && !killed) {
+    child.kill();
+    await exited;
+    throw new PfStreamError('PFSTREAM_EXEC_ABORT', '解码已被调用方取消');
+  }
+
+  const code = await exited;
+  if (code !== 0 && !killed) {
+    const stderrTail = Buffer.concat(stderrChunks)
+      .subarray(Math.max(0, stderrBytes - 2048))
+      .toString('utf8');
+    throw new PfStreamError(
+      'PFSTREAM_EXEC_NONZERO',
+      `ffmpeg 流式解码退出码 ${code}\nstderr 尾部：\n${stderrTail}`,
+    );
+  }
+  return { frameCount: frameIndex, realigned };
 }
 
 /** 空帧回退解码：优先目标 PTS，空帧回退 lastPts，仍空则报错。 */

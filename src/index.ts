@@ -15,6 +15,7 @@ import {
   handleToolCall,
   type InspectFn,
   type ProbeFn,
+  type StreamFn,
   type ToolCallArgs,
   type ToolExec,
   type ToolResult,
@@ -22,6 +23,7 @@ import {
 import { TOOL_NAME, TOOL_DESCRIPTION, toolOutputSchema, toolParameters } from './tool/schema.js';
 import { probeVideo } from './stage0/probe.js';
 import { runDeterministicInspection } from './stage3/deterministicRouter.js';
+import { runStreamCall } from './tool/streamCall.js';
 import { resolveBinPaths } from './utils/ffmpegBin.js';
 
 export const name = 'dsh-pf-stream';
@@ -81,6 +83,16 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
       appliedIntentId: 'intent_1',
       signal,
     });
+  const stream: StreamFn = (videoPath, probeResult, intent, sessionId, signal) =>
+    runStreamCall(videoPath, probeResult, intent, sessionId ?? 'default', {
+      ffmpegPath: bins.ffmpeg,
+      renderVisualId: config.renderVisualId,
+      defaultStreamWindowMs: config.defaultStreamWindowMs,
+      streamWorkMaxEdge: config.streamWorkMaxEdge,
+      maxPacketsPerCall: config.maxPacketsPerCall,
+      maxTokensBudgetPerCall: config.maxTokensBudgetPerCall,
+      signal,
+    });
   return {
     name: TOOL_NAME,
     description: TOOL_DESCRIPTION,
@@ -97,7 +109,7 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
     // 会话级状态使并发不安全。
     isConcurrencySafe: () => false,
     async execute(args: ToolCallArgs, exec: ToolExec | undefined): Promise<ToolResult> {
-      return handleToolCall(args, exec, { probe, inspect });
+      return handleToolCall(args, exec, { probe, inspect, stream });
     },
   };
 }

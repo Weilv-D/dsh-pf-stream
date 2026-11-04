@@ -9,7 +9,7 @@
  * - 空帧回退复用最后一个有效解码帧。
  */
 
-import { decodePointWithFallback, decodeRange } from '../stage0/decoder.js';
+import { decodePointWithFallback, decodeRangeStreaming } from '../stage0/decoder.js';
 import { packCanvas, timelineHintLine, type PacketArtifact } from '../stage4/canvasPacker.js';
 import { applyViewport, planViewport } from '../stage4/viewport.js';
 import type { RgbImage } from '../utils/image.js';
@@ -134,23 +134,36 @@ export async function runDeterministicInspection(
     signal: options.signal,
   };
 
-  // 解码：批量退化或逐点
+  // 解码：批量退化（单遍流式 + 最近 PTS 帧映射）或逐点
   const frames = new Map<number, RgbImage>();
   if (shouldBatchDecode(targets)) {
-    const range = await decodeRange(videoPath, targets[0]!, targets[targets.length - 1]!, {
-      ...decodeOptions,
-    });
-    for (const target of targets) {
-      let best = range[0];
-      let bestDist = Number.POSITIVE_INFINITY;
-      for (const f of range) {
-        const dist = Math.abs(f.ptsMs - target);
-        if (dist < bestDist) {
-          best = f;
-          bestDist = dist;
+    const best = new Map<number, { dist: number; image: RgbImage }>();
+    let firstUnfinalized = 0;
+    await decodeRangeStreaming(
+      videoPath,
+      targets[0]!,
+      targets[targets.length - 1]!,
+      decodeOptions,
+      (image, ptsMs) => {
+        // 帧按 PTS 升序到达：越过目标即定稿
+        while (firstUnfinalized < targets.length && ptsMs > targets[firstUnfinalized]!) {
+          const t = targets[firstUnfinalized]!;
+          const hit = best.get(t);
+          if (hit) frames.set(t, hit.image);
+          firstUnfinalized++;
         }
-      }
-      if (best) frames.set(target, best.image);
+        for (let j = firstUnfinalized; j < Math.min(targets.length, firstUnfinalized + 8); j++) {
+          const t = targets[j]!;
+          const dist = Math.abs(ptsMs - t);
+          const prev = best.get(t);
+          if (!prev || dist < prev.dist) best.set(t, { dist, image });
+        }
+      },
+    );
+    for (let j = firstUnfinalized; j < targets.length; j++) {
+      const t = targets[j]!;
+      const hit = best.get(t);
+      if (hit) frames.set(t, hit.image);
     }
   } else {
     let lastValid: RgbImage | null = null;
