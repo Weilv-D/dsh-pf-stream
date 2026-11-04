@@ -91,6 +91,10 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
       streamWorkMaxEdge: config.streamWorkMaxEdge,
       maxPacketsPerCall: config.maxPacketsPerCall,
       maxTokensBudgetPerCall: config.maxTokensBudgetPerCall,
+      maxRequestBytes: config.maxRequestBytes,
+      maxColdRefs: config.maxColdRefs,
+      epochCompactionWindow: config.epochCompactionWindow,
+      imageCountTiersEnabled: config.meteringProfile.imageCountTiersEnabled,
       signal,
     });
   return {

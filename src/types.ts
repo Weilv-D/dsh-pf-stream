@@ -164,14 +164,42 @@ export interface FUnitCacheEntry {
   ptsMs: number;
   independentBytes: Buffer;
   anchorFSha256: string;
-  stripBytes?: Buffer;
-  stripSha256?: string;
-  contentHash?: string;
+  stripBytes?: Buffer | undefined;
+  stripSha256?: string | undefined;
+  contentHash?: string | undefined;
 }
 
-/** 发包历史环形队列：按包龄新→旧排列；热区为最近 2 包，冷区至多 maxColdRefs 包。 */
+/** 历史环条目：包元数据 + 双载体字节（热/冷区引用逐字节复用的来源）。 */
+export interface HistoryEntry {
+  packet: CanvasPacket;
+  /** 条带载体字节（FORM_1/2/4；FORM_3 为独立载体字节）。 */
+  imageBytes: Buffer;
+  /** F 独立载体字节（含 F 单元的包）。 */
+  anchorBytes: Buffer | null;
+}
+
+/** 发包历史环形队列：按包龄旧→新排列；热区为最近 2 包，冷区至多 maxColdRefs 包。 */
 export interface HistoryRing {
-  packets: CanvasPacket[];
+  packets: HistoryEntry[];
+}
+
+/** 冷区锚点引用计划（Epoch 内固定，跨轮逐字节复用）。 */
+export interface ColdRefPlan {
+  refPacketId: number;
+  sourcePacketId: number;
+  anchorFId: number;
+  anchorFSha256: string;
+  ptsMs: number;
+  eventType: UnitDescriptor['eventType'];
+  sourceCropBbox: [number, number, number, number];
+  /** 与首次发包的独立载体逐字节一致。 */
+  bytes: Buffer;
+}
+
+/** Epoch Compaction 状态：窗口内冷区引用零变动（前缀稳定）。 */
+export interface EpochState {
+  pendingNew: number;
+  coldRefs: ColdRefPlan[];
 }
 
 // ---------------------------------------------------------------------------
@@ -276,6 +304,7 @@ export interface StreamCursor {
 export interface SessionVideoState {
   cursor: StreamCursor;
   history: HistoryRing;
+  epoch: EpochState;
 }
 
 export interface SessionState {

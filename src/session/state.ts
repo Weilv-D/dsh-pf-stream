@@ -82,6 +82,7 @@ export function getVideoSlot(state: SessionState, fingerprint: VideoFingerprint)
       lastAnchorF: null,
     },
     history: { packets: [] },
+    epoch: { pendingNew: 0, coldRefs: [] },
   };
   state.videos.set(key, slot);
   return slot;

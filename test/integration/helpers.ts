@@ -59,6 +59,46 @@ export async function runFixtureStream(
   return runStreamPass(path, probe, STANDARD_INTENT, slot.cursor, streamOptions(options));
 }
 
+// ---------------------------------------------------------------------------
+// Stage 6 编排级（runStreamCall）辅助
+// ---------------------------------------------------------------------------
+
+import { runStreamCall, type StreamCallOptions, type StreamCallResult } from '../../src/tool/streamCall.js';
+import { getSessionState } from '../../src/session/state.js';
+import type { IntentDirective } from '../../src/types.js';
+
+export function streamCallOptions(over: Partial<StreamCallOptions> = {}): StreamCallOptions {
+  return {
+    ffmpegPath: 'ffmpeg',
+    renderVisualId: false,
+    defaultStreamWindowMs: 4000,
+    streamWorkMaxEdge: 0,
+    maxPacketsPerCall: 64,
+    maxTokensBudgetPerCall: 65536,
+    maxRequestBytes: 56 * 1024 * 1024,
+    maxColdRefs: 4,
+    epochCompactionWindow: 6,
+    imageCountTiersEnabled: false,
+    ...over,
+  };
+}
+
+/** 以指定会话顺序推进流式调用（两级历史引用与 Epoch 语义测试入口）。 */
+export async function runStreamCallFixture(
+  name: string,
+  sessionId: string,
+  intent: Partial<IntentDirective>,
+  options: Partial<StreamCallOptions> = {},
+): Promise<StreamCallResult> {
+  const path = fixturePath(name);
+  const probe = await probeVideo(path, { ffprobePath: 'ffprobe' });
+  return runStreamCall(path, probe, intent as IntentDirective, sessionId, streamCallOptions(options));
+}
+
+export function packetsOf(result: StreamCallResult) {
+  return result.packets.map((a) => a.packet);
+}
+
 /** 画布合法性：42px 整除、计费 ≤1024、bbox 对齐（契约 1）。 */
 export function expectPacketLegal(result: StreamRunResult): void {
   for (const { packet } of result.packets) {

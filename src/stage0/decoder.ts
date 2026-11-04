@@ -80,8 +80,11 @@ export async function probePtsIndex(
   for (const f of parsed.frames ?? []) {
     const t = f.pts_time;
     if (t == null) continue;
-    // 保留亚毫秒精度：30fps 帧距 33.333ms，取整到 33ms 会低于 33.3 步进门
-    entries.push({ frameIndex: entries.length, ptsMs: Number.parseFloat(t) * 1000 });
+    const ms = Number.parseFloat(t) * 1000;
+    // read_intervals 起点为关键帧回卷（pre-roll）：丢弃窗口外条目，
+    // 保证与 ffmpeg 精确 -ss 的首帧对齐（VFR 安全，亚毫秒精度）。
+    if (ms < window0Ms - 0.5 || ms > window1Ms + 0.5) continue;
+    entries.push({ frameIndex: entries.length, ptsMs: ms });
   }
   return entries;
 }
