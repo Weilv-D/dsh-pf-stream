@@ -14,7 +14,12 @@ import {
   planHistoryRefs,
   recordPackets,
 } from '../stage6/history.js';
-import { precheckBundle, type BundleItem, type PrecheckResult } from '../stage6/precheck.js';
+import {
+  precheckBundle,
+  type BundleItem,
+  type BundleKind,
+  type PrecheckResult,
+} from '../stage6/precheck.js';
 import { baselinesFromIntent, mergeSessionIntent } from '../stage5/intent.js';
 import { fingerprintOf, getSessionState, getVideoSlot } from '../session/state.js';
 import type { IntentDirective, ProbeResult } from '../types.js';
@@ -37,8 +42,23 @@ export interface StreamCallOptions {
   signal?: AbortSignal | undefined;
 }
 
+/**
+ * 预检结果的 JSON 安全投影。
+ *
+ * `PrecheckResult.kept[].artifact` 持有 PNG `Buffer`（imageBytes/anchorBytes），
+ * 直接并入工具返回值会让宿主 `snapshotToolValue` 判为
+ * “value is not lossless JSON” 并拒绝整次调用；因此遥测只回显引用标识与计量。
+ */
+export interface PrecheckSummary {
+  kept: Array<{ kind: BundleKind; packetId: number }>;
+  dropped: Array<{ kind: BundleKind; packetId: number }>;
+  truncatedCurrent: boolean;
+  encodedBytes: number;
+  tokens: number;
+}
+
 export interface StreamCallResult extends Omit<StreamRunResult, 'telemetry'> {
-  telemetry: StreamRunResult['telemetry'] & { precheck: PrecheckResult };
+  telemetry: StreamRunResult['telemetry'] & { precheck: PrecheckSummary };
   /** 冷区引用数（Epoch 固定复用）。 */
   coldRefCount: number;
   /** 热区引用数。 */
@@ -148,11 +168,22 @@ export async function runStreamCall(
     ...result,
     packets: keptPackets,
     hintLines: keptHintLines,
-    telemetry: { ...result.telemetry, precheck },
+    telemetry: { ...result.telemetry, precheck: summarizePrecheck(precheck) },
     coldRefCount: precheck.kept.filter((it) => it.kind === 'cold').length,
     hotRefCount: precheck.kept.filter((it) => it.kind === 'hot').length,
     sessionIntentId: merged.intentId,
     appliedIntentId: merged.intentId,
+  };
+}
+
+/** 预检结果 → 无损 JSON 投影（剔除 PNG Buffer 载体）。 */
+function summarizePrecheck(precheck: PrecheckResult): PrecheckSummary {
+  return {
+    kept: precheck.kept.map((it) => ({ kind: it.kind, packetId: it.artifact.packet.packetId })),
+    dropped: precheck.dropped.map((it) => ({ kind: it.kind, packetId: it.packetId })),
+    truncatedCurrent: precheck.truncatedCurrent,
+    encodedBytes: precheck.encodedBytes,
+    tokens: precheck.tokens,
   };
 }
 

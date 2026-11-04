@@ -9,6 +9,7 @@
 import type { IntentDirective, LegacyInspectionParams, ProbeResult } from '../types.js';
 import { PfStreamError } from '../errors.js';
 import type { InspectionResult } from '../stage3/deterministicRouter.js';
+import type { PacketArtifact } from '../stage4/canvasPacker.js';
 import type { StreamCallResult } from './streamCall.js';
 
 export { PfStreamError } from '../errors.js';
@@ -26,6 +27,23 @@ export interface ToolExec {
 }
 
 export type ToolResult = Record<string, unknown>;
+
+/** 宿主图像内容块引用的 JSON 投影（只含宿主 schema 允许的字段）。 */
+export interface AttachedImage {
+  attachmentId: string;
+  mediaType: string;
+  bytes: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * 画布包 PNG → 宿主附件引用。
+ *
+ * 返回值与入参 artifacts 按索引对齐；未提交的槽位为 undefined。
+ * 入口层未挂载 attachments 服务时返回空数组，工具退化为纯元数据结果。
+ */
+export type AttachImagesFn = (artifacts: PacketArtifact[]) => Promise<Array<AttachedImage | undefined>>;
 
 /** probe 通道实现，由插件入口注入（便于测试替换）。 */
 export type ProbeFn = (videoPath: string, signal: AbortSignal | undefined) => Promise<ProbeResult>;
@@ -51,12 +69,26 @@ export interface ToolDeps {
   probe: ProbeFn;
   inspect?: InspectFn | undefined;
   stream?: StreamFn | undefined;
+  /** 宿主附件回传（可选：缺省时只返回画布元数据）。 */
+  attachImages?: AttachImagesFn | undefined;
 }
 
 export function resolveAction(args: ToolCallArgs): NonNullable<IntentDirective['action']> {
   if (args.intent?.action) return args.intent.action;
   if (args.intent?.probe_only === true || args.probe_only === true) return 'probe';
   return 'pf_stream';
+}
+
+/** 给发包元数据补上 `image` 附件引用；无引用时只回显元数据。 */
+async function withPacketImages(
+  artifacts: PacketArtifact[],
+  attachImages: AttachImagesFn | undefined,
+): Promise<ToolResult[]> {
+  const refs = attachImages ? await attachImages(artifacts) : [];
+  return artifacts.map((artifact, index) => {
+    const image = refs[index];
+    return image ? { ...artifact.packet, image } : { ...artifact.packet };
+  });
 }
 
 export async function handleToolCall(
@@ -76,10 +108,11 @@ export async function handleToolCall(
     const probeResult = await deps.probe(args.video_path, exec?.signal);
     const intent = (args.intent ?? {}) as IntentDirective;
     const inspection = await deps.inspect(args.video_path, probeResult, intent, exec?.signal);
+    const packets = await withPacketImages(inspection.packets, deps.attachImages);
     return {
       action,
       probe: probeResult,
-      packets: inspection.packets.map((p) => p.packet),
+      packets,
       hintLines: inspection.hintLines,
     };
   }
@@ -90,10 +123,11 @@ export async function handleToolCall(
     const probeResult = await deps.probe(args.video_path, exec?.signal);
     const intent = (args.intent ?? {}) as IntentDirective;
     const stream = await deps.stream(args.video_path, probeResult, intent, exec?.sessionId, exec?.signal);
+    const packets = await withPacketImages(stream.packets, deps.attachImages);
     return {
       action: 'pf_stream',
       probe: probeResult,
-      packets: stream.packets.map((p) => p.packet),
+      packets,
       hintLines: stream.hintLines,
       heartbeats: stream.heartbeats,
       telemetry: stream.telemetry,

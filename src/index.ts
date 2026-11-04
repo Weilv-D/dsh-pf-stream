@@ -13,6 +13,8 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { PfStreamPluginConfig } from './types.js';
 import {
   handleToolCall,
+  type AttachedImage,
+  type AttachImagesFn,
   type InspectFn,
   type ProbeFn,
   type StreamFn,
@@ -20,6 +22,7 @@ import {
   type ToolExec,
   type ToolResult,
 } from './tool/handler.js';
+import type { PacketArtifact } from './stage4/canvasPacker.js';
 import { TOOL_NAME, TOOL_DESCRIPTION, toolOutputSchema, toolParameters } from './tool/schema.js';
 import { probeVideo } from './stage0/probe.js';
 import { runDeterministicInspection } from './stage3/deterministicRouter.js';
@@ -28,7 +31,7 @@ import { resolveBinPaths } from './utils/ffmpegBin.js';
 
 export const name = 'dsh-pf-stream';
 
-export const inject = ['tools', 'subprocess'];
+export const inject = ['tools', 'subprocess', 'attachments'];
 
 /** 56 MiB = 58,720,256 字节（含 8 MiB Base64 编码膨胀与协议结构预留）。 */
 export const DEFAULT_MAX_REQUEST_BYTES = 56 * 1024 * 1024;
@@ -36,6 +39,7 @@ export const DEFAULT_MAX_REQUEST_BYTES = 56 * 1024 * 1024;
 export const Config = Schema.object({
   renderVisualId: Schema.boolean().default(true).description('渲染超像素微型反色角标'),
   maxPacketsPerCall: Schema.number().default(64).description('单次调用画布包数上限'),
+  maxImagesPerCall: Schema.number().default(20).description('单次调用回传图像上限（宿主单条消息图像上限 20）'),
   maxTokensBudgetPerCall: Schema.number().default(65536).description('单次调用视觉 Token 预算上限（intent.max_tokens_budget 受此钳制）'),
   maxRequestBytes: Schema.number().default(DEFAULT_MAX_REQUEST_BYTES).description('请求字节软水位'),
   maxColdRefs: Schema.number().default(4).description('冷区引用数量上限'),
@@ -66,12 +70,105 @@ export interface ToolsService {
   register(definition: unknown): () => void;
 }
 
+/** 宿主附件服务返回的引用（@deepseek-ai/dsh-attachment 口径）。 */
+export interface AttachmentServiceRef {
+  attachmentId: string;
+  mediaType: string;
+  width: number;
+  height: number;
+  bytes: number;
+}
+
+/**
+ * 宿主附件服务；运行时由 inject=['attachments'] 保证存在。
+ *
+ * 提交原始 PNG 字节，服务负责校验、规范化与落盘，返回可直接放进
+ * 图像内容块 `{type:'image', attachment}` 的引用。
+ */
+export interface AttachmentsService {
+  saveImages(
+    inputs: Array<{ data: Uint8Array; mediaType: string; name?: string }>,
+  ): Promise<AttachmentServiceRef[]>;
+}
+
 /** 结构化宿主上下文：cordis Context 加 tools 服务。 */
 export type HostContext = Context & { tools: ToolsService };
+
+type ContentBlock = { type: 'text'; text: string } | { type: 'image'; attachment: AttachedImage };
+
+/** 从 cordis 上下文取附件服务（测试替身可能没有 get）。 */
+function resolveAttachments(ctx: HostContext): AttachmentsService | undefined {
+  const get = (ctx as unknown as { get?: (name: string) => unknown }).get;
+  if (typeof get !== 'function') return undefined;
+  const service = get.call(ctx, 'attachments');
+  if (service === undefined || service === null) return undefined;
+  return service as AttachmentsService;
+}
+
+/**
+ * 画布包 PNG 提交给宿主附件服务。
+ *
+ * 宿主单条消息有图像张数上限（缺省 20），超出时保留最新包，旧包只回元数据。
+ * 返回值与 artifacts 按索引对齐，未提交的槽位为 undefined。
+ */
+async function savePacketImages(
+  attachments: AttachmentsService | undefined,
+  artifacts: PacketArtifact[],
+  limit: number,
+): Promise<Array<AttachedImage | undefined>> {
+  if (attachments === undefined || artifacts.length === 0) return [];
+  const keep = Math.max(1, Math.min(Math.trunc(limit) || 1, artifacts.length));
+  const start = artifacts.length - keep;
+  const inputs = artifacts.slice(start).map((artifact) => ({
+    data: artifact.imageBytes,
+    mediaType: 'image/png',
+    name: `pf-packet-${artifact.packet.packetId}.png`,
+  }));
+  const refs = await attachments.saveImages(inputs);
+  if (refs.length !== inputs.length) {
+    throw new Error(
+      `attachment service returned ${refs.length} references for ${inputs.length} canvases; ` +
+        'refusing to return a partial result',
+    );
+  }
+  const aligned: Array<AttachedImage | undefined> = new Array<AttachedImage | undefined>(artifacts.length);
+  refs.forEach((ref, index) => {
+    aligned[start + index] = {
+      attachmentId: String(ref.attachmentId),
+      mediaType: String(ref.mediaType),
+      bytes: Math.round(Number(ref.bytes) || 0),
+      width: Math.round(Number(ref.width) || 0),
+      height: Math.round(Number(ref.height) || 0),
+    };
+  });
+  return aligned;
+}
+
+/**
+ * 工具结果 → 模型可见内容块：一段完整 JSON 文本 + 每张画布一张真图。
+ *
+ * 宿主把 render 的返回值直接当 content 数组使用，并调用 content.some(...)，
+ * 因此必须返回内容块数组（单个块对象会在消费侧抛 TypeError）。
+ */
+export function renderContent(value: unknown): ContentBlock[] {
+  const blocks: ContentBlock[] = [{ type: 'text', text: JSON.stringify(value, null, 2) }];
+  const packets = (value as { packets?: unknown }).packets;
+  if (!Array.isArray(packets)) return blocks;
+  for (const packet of packets) {
+    const image = (packet as { image?: unknown }).image as AttachedImage | undefined;
+    if (image !== undefined && image !== null && typeof image.attachmentId === 'string') {
+      blocks.push({ type: 'image', attachment: image });
+    }
+  }
+  return blocks;
+}
 
 export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamPluginConfig }) {
   const { config } = _deps;
   const bins = resolveBinPaths({ ffmpegPath: config.ffmpegPath, ffprobePath: config.ffprobePath });
+  const attachments = resolveAttachments(_deps.ctx);
+  const attachImages: AttachImagesFn = (artifacts) =>
+    savePacketImages(attachments, artifacts, config.maxImagesPerCall);
   const probe: ProbeFn = (videoPath, signal) =>
     probeVideo(videoPath, { ffprobePath: bins.ffprobe, signal });
   const inspect: InspectFn = (videoPath, probeResult, intent, signal) =>
@@ -106,17 +203,16 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
     parameters: toolParameters,
     output: {
       schema: toolOutputSchema,
-      render: (_args: unknown, value: unknown) => ({
-        type: 'text' as const,
-        text: JSON.stringify(value, null, 2),
-      }),
+      // 宿主把 render 的返回值直接当 content 使用，并调用 content.some(...)，
+      // 因此必须返回内容块数组（单个块对象会在消费侧抛 TypeError）。
+      render: (_args: unknown, value: unknown) => renderContent(value),
     },
     timeoutMs: TOOL_TIMEOUT_MS,
     // 同一 (sessionId, videoKey) 的调用经 per-key promise 队列串行化，
     // 会话级状态使并发不安全。
     isConcurrencySafe: () => false,
     async execute(args: ToolCallArgs, exec: ToolExec | undefined): Promise<ToolResult> {
-      return handleToolCall(args, exec, { probe, inspect, stream });
+      return handleToolCall(args, exec, { probe, inspect, stream, attachImages });
     },
   };
 }

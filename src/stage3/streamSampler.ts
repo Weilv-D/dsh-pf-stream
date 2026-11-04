@@ -182,21 +182,18 @@ export async function runStreamPass(
   const ffmpegSpawns: string[][] = [];
   let arenaMaxHeld = 0;
 
+  /**
+   * 发包：形态由可用单元数决定，调用方不必保证计数。
+   *
+   * 不变量（packCanvas 的硬约束）：FORM_1 = 4P+1F，FORM_2 = 4P，
+   * FORM_3 = 1F，FORM_4 = 1~3P+1F。因此：
+   * - 无 F 时只有 FORM_2 成立，必须恰好 4P；不足 4P 本包不成立，保留
+   *   pendingP 等后续触发，否则会抛 “FORM_2 需要 4P” 让整次调用失败；
+   * - 有 F 时 P 最多消费 4 张（多出的留在 pendingP，下一包继续）；
+   * - SWITCH_STATIC 固定 FORM_3，只发 F、不消费 P（switch 效果已清空 pendingP）。
+   */
   const emit = (trigger: TriggerPath, withF = true): void => {
     const t0 = performance.now();
-    const units: UnitInput[] = [];
-    const pUnits = rt.pendingP.splice(0);
-    for (const p of pUnits) {
-      counters.globalUnitSeq++;
-      units.push({
-        globalId: counters.globalUnitSeq,
-        ptsMs: p.ptsMs,
-        scale: '1x1_P',
-        eventType: 'MOTION',
-        image: p.image,
-        sourceCropBbox: p.sourceCropBbox,
-      });
-    }
     let fUnit: (CapturedUnit & { eventType: UnitInput['eventType'] }) | null = null;
     if (trigger === 'SETTLE' && rt.pendingF) fUnit = rt.pendingF;
     else if (trigger === 'PEAK_FULL' && withF && rt.motionArena) {
@@ -218,18 +215,36 @@ export async function runStreamPass(
       fUnit = { ...rt.fSwitchImage, eventType: 'SWITCH_STATIC' };
     }
 
+    const pCount =
+      trigger === 'SWITCH_STATIC'
+        ? 0
+        : fUnit
+          ? Math.min(rt.pendingP.length, 4)
+          : rt.pendingP.length >= 4
+            ? 4
+            : 0;
+    // 无 F 且不足 4P：本包不成立。不清理任何待发/擂台状态，等下一次触发。
+    if (pCount === 0 && !fUnit) return;
+
+    const units: UnitInput[] = [];
+    for (const p of rt.pendingP.splice(0, pCount)) {
+      counters.globalUnitSeq++;
+      units.push({
+        globalId: counters.globalUnitSeq,
+        ptsMs: p.ptsMs,
+        scale: '1x1_P',
+        eventType: 'MOTION',
+        image: p.image,
+        sourceCropBbox: p.sourceCropBbox,
+      });
+    }
+
     let form: 'FORM_1_STANDARD_STRIP' | 'FORM_2_COMPACT_4P' | 'FORM_3_COMPACT_1F' | 'FORM_4_PARTIAL_STRIP';
     if (trigger === 'SWITCH_STATIC') form = 'FORM_3_COMPACT_1F';
     else if (!fUnit) form = 'FORM_2_COMPACT_4P';
     else if (units.length >= 4) form = 'FORM_1_STANDARD_STRIP';
     else if (units.length >= 1) form = 'FORM_4_PARTIAL_STRIP';
     else form = 'FORM_3_COMPACT_1F';
-
-    if (units.length === 0 && !fUnit) {
-      // 空包保护：无单元时跳过本包（清待发标记后返回）
-      if (trigger === 'SETTLE') rt.pendingF = null;
-      return;
-    }
 
     if (fUnit) {
       counters.globalUnitSeq++;

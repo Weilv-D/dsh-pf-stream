@@ -81,7 +81,7 @@ sudo apt install ffmpeg      # Debian / Ubuntu
 
 每次调用返回一个或多个画布包：
 
-- **PNG 画布**：四形态之一（见下表）。单元间双色隔离线阻断相邻边缘特征串扰；可选超像素角标渲染单元编号。
+- **PNG 画布**：四形态之一（见下表）。单元间双色隔离线阻断相邻边缘特征串扰；可选超像素角标渲染单元编号。画布 PNG 同时作为图像内容块进入模型上下文（单次调用至多 `maxImagesPerCall` 张）。
 - **结构化元数据**：`packet_id`、每单元 PTS、token 网格 bbox、源采样 bbox、双载体 SHA-256。
 - **时序提示行**：模型可读的 P/F 单元时间轴（如 `[Packet #42 | Anchor: #105 | #101(P, 12.1s, Left-Top) → …]`）。
 
@@ -107,6 +107,7 @@ sudo apt install ffmpeg      # Debian / Ubuntu
 | --- | --- | --- |
 | `renderVisualId` | `true` | 单元左上角超像素反色角标 |
 | `maxPacketsPerCall` | `64` | 单次调用返回包数上限 |
+| `maxImagesPerCall` | `20` | 单次调用回传图像上限（宿主单条消息图像上限 20） |
 | `maxTokensBudgetPerCall` | `65536` | 单次调用视觉 token 预算 |
 | `maxRequestBytes` | `56 MiB` | 请求字节软水位（Base64 后口径） |
 | `maxColdRefs` | `4` | 冷区引用上限 |
