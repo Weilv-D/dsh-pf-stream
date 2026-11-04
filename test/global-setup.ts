@@ -3,20 +3,18 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 export default function setup(): void {
-  const scripts = [
-    'case01_rotation.mjs',
-    'case02_tail.mjs',
-    'case03_viewport.mjs',
-    'case04_modulus.mjs',
-    'case05_19_stream.mjs',
-    'case13_14_ctrl.mjs',
-  ].map((name) => join(HERE, 'fixtures', 'gen', name));
+  const genDir = join(HERE, 'fixtures', 'gen');
+  const scripts = readdirSync(genDir)
+    .filter((name) => name.endsWith('.mjs') && name !== 'lib.mjs')
+    .sort()
+    .map((name) => join(genDir, name));
   for (const script of scripts) {
     const run = spawnSync(process.execPath, [script], { encoding: 'utf8', windowsHide: true });
     if (run.status !== 0) {
