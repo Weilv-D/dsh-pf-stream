@@ -101,6 +101,20 @@ Session capabilities:
 | `FORM_3_COMPACT_1F` | 1F, 672×672 | 274 |
 | `FORM_4_PARTIAL_STRIP` | 1-3P + 1F, 1344×672 | 530 |
 
+## Canvas samples
+
+`FORM_1` standard strip: four process units (P) on the left, one focus unit (F) on the right.
+
+![FORM_1 standard strip](https://raw.githubusercontent.com/Weilv-D/dsh-pf-stream/main/assets/screenshot-1.png)
+
+`FORM_2` process-only: four process units.
+
+![FORM_2 process-only](https://raw.githubusercontent.com/Weilv-D/dsh-pf-stream/main/assets/screenshot-2.png)
+
+`FORM_3` single focus: RoI zoom review via `roi_hint`.
+
+![FORM_3 single focus RoI zoom](https://raw.githubusercontent.com/Weilv-D/dsh-pf-stream/main/assets/screenshot-3.png)
+
 ## Configuration
 
 | option | default | description |

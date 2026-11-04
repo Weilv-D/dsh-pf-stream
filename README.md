@@ -101,6 +101,20 @@ sudo apt install ffmpeg      # Debian / Ubuntu
 | `FORM_3_COMPACT_1F` | 1F，672×672 | 274 |
 | `FORM_4_PARTIAL_STRIP` | 1-3P + 1F，1344×672 | 530 |
 
+## 画布样例
+
+`FORM_1` 标准条带：左半 4 个过程单元（P），右半 1 个焦点单元（F）。
+
+![FORM_1 标准条带](https://raw.githubusercontent.com/Weilv-D/dsh-pf-stream/main/assets/screenshot-1.png)
+
+`FORM_2` 纯过程：4 个过程单元。
+
+![FORM_2 纯过程](https://raw.githubusercontent.com/Weilv-D/dsh-pf-stream/main/assets/screenshot-2.png)
+
+`FORM_3` 单焦点：`roi_hint` 局部放大检视。
+
+![FORM_3 单焦点 RoI 放大](https://raw.githubusercontent.com/Weilv-D/dsh-pf-stream/main/assets/screenshot-3.png)
+
 ## 配置
 
 | 配置项 | 默认 | 说明 |
