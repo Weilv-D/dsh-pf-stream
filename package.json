@@ -1,6 +1,6 @@
 {
   "name": "dsh-pf-stream",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "DeepSeek Harness video perception plugin: adaptive dual-scale streaming sampling plus deterministic inspection, aligned to the DeepSeek-V4.1-Flash vision pipeline (42px superpixel grid, <=1024 tokens per image).",
   "type": "module",
   "repository": {
