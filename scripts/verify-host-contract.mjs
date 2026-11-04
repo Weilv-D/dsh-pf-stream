@@ -122,6 +122,27 @@ try {
 check('pngjs 依赖闭包无原生构建链', nativeViolations === '', nativeViolations);
 
 // ---------------------------------------------------------------------------
+// 5. cordis.patch.yml 装载清单形状（宿主安装器要求：顶层数组，元素为
+//    { insert: [ { id, name, ... } ] } 装载补丁；宿主 dsh.bundle.patch 校验）
+// ---------------------------------------------------------------------------
+const overlayRaw = readFileSync(join(root, 'cordis.patch.yml'), 'utf8');
+const overlayLines = overlayRaw
+  .split(/\r?\n/)
+  .map((line) => line.replace(/#.*$/, '').trimEnd())
+  .filter((line) => line.trim() !== '');
+const firstEntry = overlayLines[0] ?? '';
+const insertRows = overlayLines.filter((line) => /^\s+(-\s+)?(id|name):/.test(line));
+check(
+  'cordis.patch.yml 顶层为装载补丁数组（首个非注释行为 "- insert:"）',
+  /^-\s*insert:\s*$/.test(firstEntry),
+  `实际首行：${JSON.stringify(firstEntry)}`,
+);
+check(
+  '装载补丁 insert 行含 id 与 name 字段',
+  insertRows.some((line) => /^\s+(-\s+)?id:/.test(line)) && insertRows.some((line) => /^\s+(-\s+)?name:/.test(line)),
+  `实际行：${insertRows.join(' | ')}`,
+);
+// ---------------------------------------------------------------------------
 // 汇总
 // ---------------------------------------------------------------------------
 for (const p of passes) console.log(`  PASS  ${p}`);

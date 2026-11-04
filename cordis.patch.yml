@@ -1,2 +1,4 @@
-insert:
-  - name: dsh-pf-stream
+# dsh bundle patch: inserts this plugin into a profile's layer stack.
+- insert:
+    - id: dsh-pf-stream
+      name: 'dsh-pf-stream'
