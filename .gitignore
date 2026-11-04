@@ -3,6 +3,7 @@ research/
 
 # Node
 node_modules/
+lib/
 dist/
 *.tsbuildinfo
 
