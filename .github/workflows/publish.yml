@@ -140,7 +140,7 @@ jobs:
           path: pkg
 
       - name: 发布 tarball（Trusted Publishing + provenance）
-        run: npm publish "pkg/dsh-pf-stream-${{ needs.guard.outputs.version }}.tgz" --provenance
+        run: npm publish "./pkg/dsh-pf-stream-${{ needs.guard.outputs.version }}.tgz" --provenance
 
       - name: 发布后验证
         run: |
