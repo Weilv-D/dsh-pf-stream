@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Video understanding",
-    "description": "Lets the agent watch videos: adaptive canvas sampling with subtitles or transcribed speech. Download a local model (~190MB) or add a cloud key on the plugin page."
+    "description": "The plugin samples keyframes adaptively as the picture changes, then combines them with embedded subtitles or transcript text, so the agent can read visuals and dialogue together.\n\nTranscription works in two ways: a local model runs offline, or a cloud API key calls a hosted service. The local model can be downloaded on the plugin page."
   }
 }
