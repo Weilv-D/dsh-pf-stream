@@ -282,6 +282,11 @@ export class LocalAsrInstaller {
     mkdirSync(managed.binDir, { recursive: true });
 
     if (job.target === 'engine' || job.target === 'all') {
+      if (!existsSync(managed.exe) && process.platform !== 'win32') {
+        throw new Error(
+          '当前平台暂不支持一键安装本地引擎。请安装 whisper.cpp 后，在配置文件 audio.asr.local.binPath 填写可执行文件路径，或改用云端转写。',
+        );
+      }
       if (!existsSync(managed.exe)) {
         this.patch({ resource: 'whisper.cpp 引擎', phase: 'downloading', received: 0, total: null });
         const archive = join(managed.binDir, 'whisper-cpp.zip');
