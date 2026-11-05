@@ -23,7 +23,8 @@ window.__ModuleLoader__.load({
       panelSubtitle:
         '以下设置用于启用语音识别与转写。未配置时不影响视频播放，但不会生成转写文本；完成配置后，可对含有效音轨的视频进行转写。',
       refresh: '刷新',
-      github: '在 GitHub 上查看源码',
+      github: '在 GitHub 上点个 Star',
+      githubAria: '在 GitHub 上打开项目仓库',
       checking: '正在读取状态…',
       ffmpeg: '视频解码',
       ffmpegOk: '已就绪',
@@ -97,7 +98,8 @@ window.__ModuleLoader__.load({
       panelSubtitle:
         'These settings enable speech recognition and transcription. Without them, video playback is unaffected, but no transcript is generated. Once configured, videos with a usable audio track can be transcribed.',
       refresh: 'Refresh',
-      github: 'View source on GitHub',
+      github: 'Star this project on GitHub',
+      githubAria: 'Open the project repository on GitHub',
       checking: 'Reading status…',
       ffmpeg: 'Video decoding',
       ffmpegOk: 'Ready',
@@ -747,7 +749,7 @@ window.__ModuleLoader__.load({
               target: '_blank',
               rel: 'noreferrer',
               title: t('github'),
-              'aria-label': t('github'),
+              'aria-label': t('githubAria'),
               style: styles.iconButton,
             },
             h(
