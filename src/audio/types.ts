@@ -92,6 +92,10 @@ export interface AudioPluginConfig {
   cacheDir: string;
   graceMs: number;
   asr: {
+    /** 引擎选择（0.3.0）：auto/local/cloud/off/legacy；缺省按 auto 解释。 */
+    engine?: string | undefined;
+    /** 云端服务商预设 id（openai/groq/custom）。 */
+    preset?: string | undefined;
     provider: AsrProviderKind | 'none';
     baseUrl: string | undefined;
     model: string | undefined;
@@ -99,6 +103,17 @@ export interface AudioPluginConfig {
     language: string | undefined;
     /** local_cli 附加参数（置于音频文件参数前；支持 {audio}/{out} 令牌）。 */
     args: string[] | undefined;
+    /** 本地转写引擎（0.3.0 托管安装）：可执行文件/模型路径与线程数。 */
+    local?:
+      | {
+          binPath?: string | undefined;
+          modelPath?: string | undefined;
+          modelId?: string | undefined;
+          threads?: number | undefined;
+          /** 本地转写单请求超时（毫秒）；CPU 转写远慢于云端。 */
+          timeoutMs?: number | undefined;
+        }
+      | undefined;
     timeoutMs: number;
     maxConcurrency: number;
   };

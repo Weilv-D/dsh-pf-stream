@@ -98,41 +98,6 @@ export interface RangeDecodeOptions extends DecodePointOptions {
   onFfmpegSpawn?: ((argv: string[]) => void) | undefined;
 }
 
-/**
- * 区间单遍解码（批量定点退化路径与流式共用骨架）。
- * 返回帧序列（display 坐标系，全分辨率或受 workMaxEdge 上限的等比缩放）。
- */
-export async function decodeRange(
-  videoPath: string,
-  window0Ms: number,
-  window1Ms: number,
-  options: RangeDecodeOptions,
-  onFrame?: (frame: RgbImage, ptsMs: number) => void | Promise<void>,
-): Promise<Array<{ ptsMs: number; image: RgbImage }>> {
-  const index = await probePtsIndexExec(options, videoPath, window0Ms, window1Ms);
-  if (index.length === 0) return [];
-  const geometry = rangeOutputGeometry(options);
-  const argv = rangeArgv(videoPath, window0Ms, window1Ms, geometry);
-  const { stdout } = await execFile(options.ffmpegPath, argv, {
-    signal: options.signal,
-    encoding: 'buffer',
-  });
-  const frameBytes = geometry.outW * geometry.outH * 3;
-  const frameCount = Math.floor(stdout.length / frameBytes);
-  const frames: Array<{ ptsMs: number; image: RgbImage }> = [];
-  for (let i = 0; i < frameCount; i++) {
-    const ptsMs = index[Math.min(i, index.length - 1)]!.ptsMs;
-    const image: RgbImage = {
-      width: geometry.outW,
-      height: geometry.outH,
-      data: stdout.subarray(i * frameBytes, (i + 1) * frameBytes),
-    };
-    frames.push({ ptsMs, image });
-    await onFrame?.(image, ptsMs);
-  }
-  return frames;
-}
-
 async function probePtsIndexExec(
   options: RangeDecodeOptions,
   videoPath: string,
@@ -188,7 +153,7 @@ function rangeArgv(
 
 export interface StreamDecodeResult {
   frameCount: number;
-  /** 帧序号超出 PTS 索引长度时按最近 PTS 钳制的帧数。 */
+  /** 索引耗尽后按最近 PTS 钳制重对齐消费的解码裕量帧数（窗口外帧，PTS 钳到末帧）。 */
   realigned: number;
 }
 
@@ -224,7 +189,6 @@ export async function decodeRangeStreaming(
   let frameIndex = 0;
   let realigned = 0;
   let killed = false;
-  let indexExhausted = false;
   // 墙钟 30s 无帧推进告警（规格《六》§1）：解码器长时间无输出即终止并报错。
   const STALL_TIMEOUT_MS = 30_000;
   let lastFrameWallMs = Date.now();
@@ -245,26 +209,25 @@ export async function decodeRangeStreaming(
     for await (const chunk of child.stdout!) {
       pending = pending ? Buffer.concat([pending, chunk as Buffer]) : (chunk as Buffer);
       while (pending && pending.length >= frameBytes) {
-        if (frameIndex >= index.length) {
-          // 索引耗尽：解码裕量产出的 surplus 帧位于窗口之外，丢弃并终止解码。
-          indexExhausted = true;
-          break;
-        }
         const image: RgbImage = {
           width: geometry.outW,
           height: geometry.outH,
           data: pending.subarray(0, frameBytes),
         };
-        lastFrameWallMs = Date.now();
-        await onFrame(image, index[frameIndex]!.ptsMs);
-        lastFrameWallMs = Date.now();
+        if (frameIndex < index.length) {
+          lastFrameWallMs = Date.now();
+          await onFrame(image, index[frameIndex]!.ptsMs);
+          lastFrameWallMs = Date.now();
+          frameIndex++;
+        } else {
+          // 索引耗尽：解码裕量帧（-t 窗口 +1s 产出）位于窗口之外，按最近 PTS 钳制
+          // 重对齐消费（设计 R3 兜底），不产生新窗口 PTS；流式感知侧的 33.3ms 步长门
+          // 会自然丢弃重复 PTS 帧。
+          realigned++;
+          await onFrame(image, index[index.length - 1]!.ptsMs);
+          lastFrameWallMs = Date.now();
+        }
         pending = pending.length > frameBytes ? pending.subarray(frameBytes) : null;
-        frameIndex++;
-      }
-      if (indexExhausted) {
-        killed = true;
-        child.kill();
-        break;
       }
       if (options.signal?.aborted) break;
     }
@@ -289,7 +252,7 @@ export async function decodeRangeStreaming(
       `解码连续 ${STALL_TIMEOUT_MS}ms 无帧推进，已终止（可能为损坏媒体或解码器阻塞）`,
     );
   }
-  if (code !== 0 && !killed) {
+  if (code !== 0 && !killed && realigned === 0) {
     const stderrTail = Buffer.concat(stderrChunks)
       .subarray(Math.max(0, stderrBytes - 2048))
       .toString('utf8');

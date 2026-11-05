@@ -1,5 +1,5 @@
 /**
- * dsh-pf-stream — DeepSeek Harness 视频感知插件入口。
+ * dsh-pf-stream — DeepSeek Harness 视频理解插件入口。
  *
  * 统一 action 路由：动态流式采样（pf_stream）与内建确定性检视
  * （probe / timestamps / uniform / RoI）共用主工具 dsh-pf-stream。
@@ -34,6 +34,14 @@ import { resolveAudioSettings } from './audio/sidecar.js';
 import { loadSubtitleTimeline } from './audio/subtitleExtractor.js';
 import type { AudioSettings } from './audio/types.js';
 import type { IntentDirective } from './types.js';
+import {
+  HostRuntime,
+  type ConfigEditorService,
+  type CredentialsService,
+  type HostServices,
+  type WebServerService,
+} from './host/runtime.js';
+import { registerApi } from './host/api.js';
 
 export const name = 'dsh-pf-stream';
 
@@ -66,12 +74,25 @@ export const Config = Schema.object({
     cacheDir: Schema.string().default(join(homedir(), '.dsh', 'cache', 'dsh-pf-stream')).description('转写缓存目录'),
     graceMs: Schema.number().default(8000).description('音频软截止（毫秒）'),
     asr: Schema.object({
+      engine: Schema.string()
+        .default('auto')
+        .description('转写引擎（auto 自动选择/local 本地/cloud 云端/off 关闭/legacy 旧 provider 语义）'),
+      preset: Schema.string().default('openai').description('云端服务商预设（openai/groq/custom）'),
       provider: Schema.string().default('none').description('ASR provider（none/openai_verbose/openai_basic/local_cli）'),
       baseUrl: Schema.string().description('OpenAI 兼容端点（缺省官方）'),
       model: Schema.string().description('模型名或本地 CLI 可执行文件路径（local_cli）'),
       apiKey: Schema.string().description('API key（环境变量 DSH_ASR_API_KEY 优先）'),
       language: Schema.string().description('语言提示（如 zh、en）'),
-      args: Schema.array(Schema.string()).description('local_cli 附加参数（{audio} 音频/{out} 输出文件/{dir} 临时目录 令牌）'),
+      args: Schema.array(Schema.string()).description(
+        'local_cli 附加参数（{audio} 音频/{out} 输出文件/{outbase} 输出基名/{dir} 临时目录 令牌）；engine=auto 且用托管引擎时无需填写',
+      ),
+      local: Schema.object({
+        binPath: Schema.string().description('本地转写可执行文件路径（缺省使用托管安装或 PATH 探测）'),
+        modelPath: Schema.string().description('模型文件路径（缺省使用托管目录中的模型）'),
+        modelId: Schema.string().default('small-q5_1').description('托管模型（base-q5_1/small-q5_1/medium-q5_0）'),
+        threads: Schema.number().default(0).description('CPU 线程数（0 自动）'),
+        timeoutMs: Schema.number().default(300_000).description('本地转写单请求超时（毫秒）'),
+      }),
       timeoutMs: Schema.number().default(8000).description('单请求超时（毫秒）'),
       maxConcurrency: Schema.number().default(2).description('分块并发上限'),
     }),
@@ -188,12 +209,16 @@ export function renderContent(value: unknown): ContentBlock[] {
   return blocks;
 }
 
-export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamPluginConfig }) {
+export function buildToolDefinition(_deps: {
+  ctx: HostContext;
+  config: PfStreamPluginConfig;
+  runtime?: HostRuntime | undefined;
+}) {
   const { config } = _deps;
   const bins = resolveBinPaths({ ffmpegPath: config.ffmpegPath, ffprobePath: config.ffprobePath });
   const attachments = resolveAttachments(_deps.ctx);
   const audioSettings = (intent: IntentDirective | undefined): AudioSettings =>
-    resolveAudioSettings(config.audio, intent, process.env);
+    resolveAudioSettings(config.audio, intent, process.env, _deps.runtime?.syncFacts());
   const attachImages: AttachImagesFn = (artifacts) =>
     savePacketImages(attachments, artifacts, config.maxImagesPerCall);
   const probe: ProbeFn = (videoPath, signal) =>
@@ -271,10 +296,63 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
 
 export function apply(ctx: Context, config: PfStreamPluginConfig) {
   const host = ctx as HostContext;
-  const dispose = host.tools.register(buildToolDefinition({ ctx: host, config }));
+  const services: HostServices = {};
+  const runtime = new HostRuntime(() => config, services);
+  const dispose = host.tools.register(buildToolDefinition({ ctx: host, config, runtime }));
+
+  // 设置页路由与配置/密钥服务都是可选依赖：宿主没有 webServer 时插件照常工作，
+  // 只是页面里的自助操作不可用（配置仍可走 cordis.patch.yml）。
+  const disposers: Array<() => void> = [];
+  const injectOptional = (deps: string[], run: (scoped: Context) => void): void => {
+    try {
+      const off = (host as unknown as {
+        inject(deps: string[], callback: (scoped: Context) => void): () => void;
+      }).inject(deps, (scoped) => {
+        try {
+          run(scoped);
+        } catch {
+          // 单个可选服务接线失败不应影响感知工具
+        }
+      });
+      if (typeof off === 'function') disposers.push(off);
+    } catch {
+      // 宿主版本不支持 inject 回调时忽略可选接线
+    }
+  };
+
+  injectOptional(['webServer'], (scoped) => {
+    const webServer = scoped.get('webServer') as unknown as WebServerService | undefined;
+    if (webServer === undefined || typeof webServer.register !== 'function') return;
+    services.webServer = webServer;
+    disposers.push(registerApi({ runtime, webServer }));
+  });
+  injectOptional(['credentials'], (scoped) => {
+    const credentials = scoped.get('credentials') as unknown as CredentialsService | undefined;
+    if (credentials === undefined) return;
+    services.credentials = credentials;
+    runtime.invalidate();
+    void runtime.refresh();
+  });
+  injectOptional(['configEditor'], (scoped) => {
+    const configEditor = scoped.get('configEditor') as unknown as ConfigEditorService | undefined;
+    if (configEditor === undefined || typeof configEditor.edit !== 'function') return;
+    services.configEditor = configEditor;
+    runtime.invalidate();
+  });
+
+  // 预热密钥与探测结果，工具首次调用即可拿到正确快照。
+  void runtime.refresh();
+
   // register 返回的 disposer 为主注销路径；'dispose' 事件为兜底
   // （经 events 服务注册，事件名不受 keyof Events 约束）。
   ctx.events.on('dispose', () => {
+    for (const off of disposers.splice(0)) {
+      try {
+        off();
+      } catch {
+        // 卸载期清理失败不再抛出
+      }
+    }
     try {
       dispose();
     } catch {

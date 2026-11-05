@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Video perception">
+  <defs>
+    <linearGradient id="pfFrame" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="12" width="56" height="40" rx="9" fill="url(#pfFrame)"/>
+  <rect x="4" y="12" width="56" height="40" rx="9" fill="none" stroke="#ffffff" stroke-opacity="0.28"/>
+  <g fill="#ffffff">
+    <rect x="20" y="26" width="3.5" height="12" rx="1.75"/>
+    <rect x="27" y="21" width="3.5" height="22" rx="1.75"/>
+    <rect x="34" y="24" width="3.5" height="16" rx="1.75"/>
+    <rect x="41" y="28" width="3.5" height="8" rx="1.75"/>
+  </g>
+  <circle cx="50" cy="45" r="9" fill="#0b1220"/>
+  <path d="M47.4 40.6 54 45l-6.6 4.4z" fill="#7cf5c4"/>
+</svg>

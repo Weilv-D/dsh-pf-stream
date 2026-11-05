@@ -169,6 +169,23 @@ describe('case16: 预检截断顺序与 56MiB 水位', () => {
     expect(r.tokens).toBe(530 * 3);
     expect(r.kept).toHaveLength(3);
   });
+
+  it('单个增量包自身超预算：如实全量丢弃（kept 空、dropped 完整记录），不静默放行', () => {
+    const giant: BundleItem[] = [
+      { kind: 'new', artifact: syntheticArtifact([1344, 672], 512 * 1024, true) },
+    ];
+    const r = precheckBundle(giant, {
+      maxRequestBytes: 8192,
+      maxPackets: 64,
+      maxTokensBudget: 65536,
+      imageCountTiersEnabled: false,
+    });
+    expect(r.kept).toHaveLength(0);
+    expect(r.dropped.map((d) => d.kind)).toEqual(['new']);
+    expect(r.truncatedCurrent).toBe(true);
+    expect(r.encodedBytes).toBe(0);
+    expect(r.tokens).toBe(0);
+  });
 });
 
 describe('case16: 单图 Token 上限（meteringProfile.maxTokensPerImage 消费点）', () => {

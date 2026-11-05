@@ -1,6 +1,6 @@
 # dsh-pf-stream Usage Guide
 
-This guide targets host operators and advanced usage. Installation steps live in the [README](../README.en.md).
+For users and agents: what each call does, which parameters exist, what comes back, and where tokens are spent. Installation and first-run setup live in the [README](../README.en.md); symptom-based fixes in the [troubleshooting guide](排障.md) (Chinese).
 
 ## Tool and action routing
 
@@ -97,6 +97,42 @@ Each call returns one text block plus image content blocks:
 - **Audio**: when the video carries speech, transcripts mount onto packets at matching times (an `Audio @Packet #N` hint line plus `audio` metadata). Source order: external or embedded subtitles → acoustic VAD plus ASR → skip silently when no speech. Transcript text stays in the original language.
 - **Heartbeats**: one heartbeat every 5 s (PTS domain) during long static periods, triggering a state health check.
 
+## Audio: where transcripts come from
+
+Three levels, in order; the first success wins:
+
+1. **Subtitles**: a sidecar file next to the video (`demo.mp4` → `demo.zh.srt` / `demo.srt`, Chinese preferred, then English), or an embedded soft subtitle track.
+2. **Speech transcription**: with no subtitles, an acoustic VAD runs first (silence short-circuits, so no cost), then the configured engine transcribes.
+3. **No speech**: returns `no_audio` instead of failing.
+
+The engine is chosen by `audio.asr.engine`, default `auto`:
+
+| `engine` | Behavior |
+| --- | --- |
+| `auto` (default) | Use a working cloud key when present, otherwise the installed local engine; otherwise no transcription |
+| `local` | Local engine only |
+| `cloud` | Cloud only |
+| `off` | Transcription off (subtitles are still extracted) |
+| `legacy` | 0.2.x semantics: follow the old `audio.asr.provider` values |
+
+Both local and cloud are configured in the plugin page, not by hand-editing config. Transcript text stays in the original language. Speech mounts onto the matching packet:
+
+```text
+Audio @Packet #42: [12.1s-12.9s] "we spent three years on this" | [13.0s-13.4s] "and today we can finally talk"
+```
+
+`audio.status` values: `ok`, `partial` (some chunks failed), `no_audio`, `silent` (audio present but no usable speech), `no_subtitle_asr_unconfigured` (no subtitles and no engine), `disabled`, `timeout_skipped`, `error`. `timeout_skipped` means the visual result returned first; transcription continues in the background and lands in the cache.
+
+## Settings page
+
+**Settings → Plugins → Video understanding** has three parts:
+
+1. **Status cards**: ffmpeg, local engine, cloud key — each with an actionable verdict.
+2. **Two setup paths**: one-click local model download (progress and cancel), or a cloud key (presets plus a custom compatible endpoint).
+3. **Advanced**: engine policy, language, model size, threads, cache usage and clearing.
+
+"Test transcription" runs a real short audio clip through the whole chain, not just a file existence check.
+
 ## Canvas forms and billing
 
 | Form | Layout | Size | Tokens |
@@ -131,14 +167,22 @@ Dual-tone separator lines block edge-feature crosstalk between units. With `rend
 | `audio.extractSubtitles` | `true` | Extract embedded or external subtitles on probe |
 | `audio.assistFocus` | `true` | Soft focus enhancement at speech-dense pauses |
 | `audio.sliceCodec` | `mp3` | Audio slice codec (`mp3` or `opus`) |
-| `audio.cacheDir` | `~/.dsh/cache/dsh-pf-stream` | Transcript cache directory (reused per file fingerprint) |
+| `audio.cacheDir` | `~/.dsh/cache/dsh-pf-stream` | Root for transcript cache, models and engines (reused per file fingerprint) |
 | `audio.graceMs` | `8000` | Transcription soft deadline (ms); visual results return first on timeout |
-| `audio.asr.provider` | `none` | Transcription provider (`none` / `openai_verbose` / `openai_basic` / `local_cli`) |
-| `audio.asr.baseUrl` | OpenAI official | Transcription endpoint (OpenAI-compatible protocol) |
-| `audio.asr.model` | `whisper-1` | Transcription model name; executable path for `local_cli` |
-| `audio.asr.apiKey` | empty | Transcription key; the `DSH_ASR_API_KEY` environment variable takes priority |
-| `audio.asr.args` | empty | Extra arguments for `local_cli`. Tokens: `{audio}` audio path, `{out}` output file, `{dir}` temp directory. Without `{audio}`, the audio path is appended last. With `{out}`/`{dir}`, artifact files are read first and stdout is the fallback |
-| `audio.asr.timeoutMs` | `8000` | Per-chunk transcription timeout (ms) |
+| `audio.asr.engine` | `auto` | `auto` / `local` / `cloud` / `off` / `legacy` |
+| `audio.asr.preset` | `openai` | Cloud preset: `openai` / `groq` / `custom` |
+| `audio.asr.baseUrl` | per preset | Cloud endpoint (OpenAI-compatible) |
+| `audio.asr.model` | per preset | Cloud model name; executable path for `local_cli` |
+| `audio.asr.apiKey` | empty | Prefer the panel (host credential store); `DSH_ASR_API_KEY` takes priority |
+| `audio.asr.language` | auto | Language hint; local engines auto-detect when empty |
+| `audio.asr.local.binPath` | managed | Your own local engine executable |
+| `audio.asr.local.modelPath` | managed | Your own model file |
+| `audio.asr.local.modelId` | `small-q5_1` | Managed model: `base-q5_1` / `small-q5_1` / `medium-q5_0` |
+| `audio.asr.local.threads` | `0` | CPU threads; `0` lets the engine decide (cap 16) |
+| `audio.asr.local.timeoutMs` | `300000` | Per-chunk local transcription timeout |
+| `audio.asr.provider` | `none` | Legacy switch; prefer `engine` |
+| `audio.asr.args` | per engine | Advanced `local_cli` template. Tokens: `{audio}`, `{out}`, `{outbase}` (whisper.cpp `-of`), `{dir}` |
+| `audio.asr.timeoutMs` | `8000` | Per-chunk cloud transcription timeout |
 | `audio.asr.maxConcurrency` | `2` | Concurrency for long-audio chunked transcription |
 | `meteringProfile.maxTokensPerImage` | `1024` | Vision token limit per image |
 | `meteringProfile.maxImagesPerRequest` | `600` | Image count limit per request |
@@ -148,19 +192,18 @@ Executable resolution order (`ffmpeg` and `ffprobe` use the same order): `ffmpeg
 
 `meteringProfile.superpixelPx` is fixed at `42`, `rounding` fixed at `ceil`, and `legacyModes` is a legacy-metering enum placeholder; none of them need configuration.
 
-Example `local_cli` configuration (whisper-ctranslate2, CPU mode):
+Example: bring your own local engine (already installed whisper-cli / whisper-ctranslate2 / faster-whisper / OpenAI whisper are detected on PATH; this pins them explicitly):
 
 ```yaml
 audio:
   asr:
-    provider: local_cli
-    model: C:/Users/<user>/AppData/Roaming/Python/Python313/Scripts/whisper-ctranslate2.exe
-    args: [--model, small, --language, zh, --task, transcribe, --output_format, srt, --output_dir, "{dir}", --device, cpu, --compute_type, int8]
-    timeoutMs: 300000
-    maxConcurrency: 1
+    engine: local
+    local:
+      binPath: C:/tools/whisper/bin/whisper-cli.exe
+      modelPath: C:/tools/whisper/models/ggml-small-q5_1.bin
 ```
 
-Local transcription is timed per chunk; raise `timeoutMs` and `audio.graceMs` for CPU mode. The CLI writes `chunk.srt` to the temp directory, and the plug-in reads it back automatically.
+Local transcription is timed per chunk; raise `audio.asr.local.timeoutMs` (and `audio.graceMs` for the first call) on slow CPUs. whisper.cpp writes `<outbase>.srt` to the temp directory and the plugin reads it back automatically. Measured on CPU with the small quantized model: 5.3 s for a 7.2 s clip.
 
 ## Error codes
 

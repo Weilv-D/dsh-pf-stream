@@ -314,11 +314,12 @@ async function runStreamCallLocked(
       keptHintLines.push(timelineHintLine(it.artifact.packet, merged.roiHint ?? null));
     }
   }
-  for (const line of result.hintLines) {
-    // 仅保留预检后仍在输出的增量包提示行（按 packetId 前缀匹配）
-    const m = /Packet #(\d+)/.exec(line);
-    if (m && newIdSet.has(Number(m[1]))) keptHintLines.push(line);
-  }
+  // 增量提示行与 result.packets 同序 1:1（采样器每次 push 相邻执行）；
+  // 仅保留预检后仍在输出的增量包提示行
+  result.packets.forEach((artifact, i) => {
+    const line = result.hintLines[i];
+    if (line !== undefined && newIdSet.has(artifact.packet.packetId)) keptHintLines.push(line);
+  });
   // 台词行紧跟对应增量包提示行（时序）
   for (const it of precheck.kept) {
     if (it.kind !== 'new') continue;

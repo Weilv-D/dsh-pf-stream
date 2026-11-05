@@ -185,8 +185,8 @@ export async function runDeterministicInspection(
   }
 
   const packets: PacketArtifact[] = [];
-  // 提示行（let：字节水位截断时需同步移除对应行）
-  let hintLines: string[] = [];
+  // 提示行与 packets 严格 1:1 同序（每次 push 相邻执行）；字节水位截断时同步弹出
+  const hintLines: string[] = [];
   let globalId = options.globalIdStart;
   let packetId = options.packetIdStart;
   /** 已发出画布包的计费 Token 累计（意图层预算判定）。 */
@@ -315,8 +315,8 @@ export async function runDeterministicInspection(
     let total = packets.reduce((acc, p) => acc + encodedSizeOf(p.imageBytes), 0);
     while (total > options.maxRequestBytes && packets.length > 0) {
       const last = packets.pop()!;
+      hintLines.pop();
       total -= encodedSizeOf(last.imageBytes);
-      hintLines = hintLines.filter((l) => !l.includes(`Packet #${last.packet.packetId} `));
     }
   }
 

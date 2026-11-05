@@ -7,7 +7,8 @@
  * - 四路流式发包：PATH_SETTLE / PEAK_FULL / PEAK_TIMEOUT / SWITCH_STATIC（DETERMINISTIC 在
  *   deterministicRouter）；M2 阶段全部 history_mode = 'initial'；
  * - R4 快定格：SWITCH 时 T_settle_eff 直写 80ms，首个 MOTION 或静态稳定后恢复基准；
- * - 近邻去重：<500ms 且期间 d < H_low 的未发出 F 原地覆盖；
+ * - 停稳 F 单槽位覆盖：未发出的 pendingF 直接被更新的停稳帧替换
+ *   （被覆盖的 F 从未发包，不产生 FUnitCache 条目，无需缓存清理）；
  * - 长静止心跳：每 5s（PTS）一条轻量 JSON，独立编号空间，不参与包龄计算；
  * - 时间判定全部基于 PTS（契约 5）；相同视频输入产出幂等事件流（case 19 断言）。
  */
@@ -50,7 +51,6 @@ export const STEP_MS = 33.3;
 export const T_MERGE_MS = 50;
 export const SWITCH_STATIC_MS = 250;
 export const F_SWITCH_DEFER_MAX_MS = 300;
-export const NEAR_DUP_MS = 500;
 export const HEARTBEAT_INTERVAL_MS = 5000;
 
 export interface StreamRunOptions {
@@ -215,12 +215,15 @@ export async function runStreamPass(
         eventType: 'MOTION',
       };
     } else if (trigger === 'PEAK_TIMEOUT' && (rt.motionArena ?? rt.settleArena)) {
+      // 兜底 F 允许来自上一段 SETTLE 观察窗（settle_cancel 保留）；
+      // eventType 按真实来源标注，不冒充运动段定格。
+      const fromMotion = rt.motionArena !== null;
       const src = rt.motionArena ?? rt.settleArena!;
       fUnit = {
         ptsMs: src.ptsMs,
         image: src.image,
         sourceCropBbox: src.sourceCropBbox,
-        eventType: 'MOTION',
+        eventType: fromMotion ? 'MOTION' : 'SETTLE',
       };
     } else if (trigger === 'SWITCH_STATIC' && rt.fSwitchImage) {
       fUnit = { ...rt.fSwitchImage, eventType: 'SWITCH_STATIC' };
@@ -410,8 +413,8 @@ export async function runStreamPass(
               rt.motionEnteredAtPtsMs = ptsMs;
               break;
             case 'settle_lock': {
-              // 锁定观察窗最清晰帧为待发 F。近邻（<500ms 且期间 d < H_low）时为原地覆盖语义：
-              // 单槽位待发 F 直接被更清晰的停稳帧替换（M4 接入 FUnitCache 后补缓存条目清理）。
+              // 锁定观察窗最清晰帧为待发 F。单槽位覆盖：尚未发出的 pendingF
+              // 直接被更新的停稳帧替换（被覆盖者从未发包，无缓存条目需要清理）。
               const source = rt.settleArena;
               if (source) {
                 rt.pendingF = {
@@ -548,7 +551,9 @@ export async function runStreamPass(
 
         // ---- 预算停止（意图层上限）----
         if (packets.length >= options.maxPackets) throw new StopIteration('budget_packets');
-        if (rt.tokensUsed + 274 > options.maxTokensBudget) throw new StopIteration('budget_tokens');
+        // 按可能发出的最贵下一包（FORM_1/FORM_4 = 530）预留，保证本通道不超预算；
+        // 按最便宜（274）预留会在 FORM_1 时最多超 256 Token。
+        if (rt.tokensUsed + 530 > options.maxTokensBudget) throw new StopIteration('budget_tokens');
       },
     );
     ptsRealign = result.realigned;
@@ -601,10 +606,10 @@ function restoreRuntime(cursor: StreamCursor): RuntimeState {
     enteredAtPtsMs: s.enteredAtPtsMs,
     integratorA: s.integratorA,
     settleStartPtsMs: s.settleStartPtsMs,
+    mergeStartPtsMs: s.mergeStartPtsMs ?? null,
+    switchStaticSincePtsMs: s.switchStaticSincePtsMs ?? null,
+    fSwitchPending: s.fSwitchPending ?? false,
   });
-  machine.mergeStartPtsMs = s.mergeStartPtsMs ?? null;
-  machine.switchStaticSincePtsMs = s.switchStaticSincePtsMs ?? null;
-  machine.fSwitchPending = s.fSwitchPending ?? false;
   return {
     machine,
     clarity: {
@@ -634,15 +639,10 @@ function restoreRuntime(cursor: StreamCursor): RuntimeState {
 
 function buildCursor(rt: RuntimeState, cursor: StreamCursor, lastPts: number, ctrl: StreamController): StreamCursor {
   const snapshot: StateMachineSnapshot = {
-    state: rt.machine.state,
-    enteredAtPtsMs: rt.machine.enteredAtPtsMs,
-    integratorA: rt.machine.integratorA,
+    ...rt.machine.snapshot(),
+    // 清晰度权威源在 ClarityState；覆盖机器副本字段
     gEma: rt.clarity.gEma,
     emaWarmupLeft: rt.clarity.warmupLeft,
-    settleStartPtsMs: rt.machine.settleStartPtsMs,
-    mergeStartPtsMs: rt.machine.mergeStartPtsMs,
-    switchStaticSincePtsMs: rt.machine.switchStaticSincePtsMs,
-    fSwitchPending: rt.machine.fSwitchPending,
     clarityWarmupLeft: rt.clarity.warmupLeft,
     rhoHistory: rt.clarity.rhoHistory.slice(-3),
     motionEnteredAtPtsMs: rt.motionEnteredAtPtsMs,

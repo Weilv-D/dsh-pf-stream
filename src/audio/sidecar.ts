@@ -10,6 +10,7 @@ import { isSilentWindow, scanVad } from './acousticVad.js';
 import { loadSubtitleTimeline, sliceSegments } from './subtitleExtractor.js';
 import { speechRateCps } from './hallucinationGuard.js';
 import { transcribeWindow } from './asrRouter.js';
+import { resolveAsr, type AsrRuntimeFacts } from '../asr/engine.js';
 import type {
   AudioContextSummary,
   AudioPluginConfig,
@@ -45,11 +46,15 @@ export const ASSIST_FOCUS_CONSTANTS = {
   minSumD: ASSIST_MIN_SUM_D,
 };
 
-/** env（DSH_ASR_API_KEY）> Config；provider 'none' 或缺 apiKey 的网络 provider → asr=null。 */
+/**
+ * env（DSH_ASR_API_KEY）> 凭据存储 > Config；引擎按 engine 语义解析
+ * （auto：旧 provider → 云端密钥 → 本地引擎 → 未配置）。
+ */
 export function resolveAudioSettings(
   config: AudioPluginConfig,
   intent: IntentDirective | undefined,
   env: NodeJS.ProcessEnv,
+  facts?: AsrRuntimeFacts | undefined,
 ): AudioSettings {
   const audioIntent: IntentAudioDirective | undefined = intent?.audio;
   const mode = audioIntent?.mode ?? config.mode;
@@ -65,23 +70,7 @@ export function resolveAudioSettings(
       asr: null,
     };
   }
-  const envKey = env.DSH_ASR_API_KEY?.trim();
-  const provider = config.asr.provider;
-  const needsKey = provider === 'openai_verbose' || provider === 'openai_basic';
-  const apiKey = envKey && envKey.length > 0 ? envKey : config.asr.apiKey?.trim() || null;
-  const asr =
-    provider !== 'none' && (!needsKey || (apiKey !== null && apiKey.length > 0))
-      ? {
-          provider,
-          baseUrl: config.asr.baseUrl?.trim() || null,
-          model: config.asr.model?.trim() || null,
-          apiKey,
-          language: audioIntent?.language ?? config.asr.language?.trim() ?? null,
-          args: config.asr.args && config.asr.args.length > 0 ? config.asr.args : null,
-          timeoutMs: config.asr.timeoutMs,
-          maxConcurrency: config.asr.maxConcurrency,
-        }
-      : null;
+  const resolution = resolveAsr(config.asr, audioIntent?.language, env, facts);
   return {
     mode: 'auto',
     extractSubtitles: audioIntent?.extract_subtitles ?? config.extractSubtitles,
@@ -90,7 +79,7 @@ export function resolveAudioSettings(
     cacheEnabled: true,
     cacheDir: config.cacheDir,
     graceMs: config.graceMs,
-    asr,
+    asr: resolution.settings,
   };
 }
 
@@ -402,9 +391,9 @@ export function audioHintLine(packetId: number, mount: PacketAudioMount): string
   return `Audio @Packet #${packetId}: ${parts.join(' | ')}${more}`;
 }
 
-/** 冷区引用行：`[Audio@#N] K segments retained`。 */
+/** 冷区引用行：`[Audio@#N] K segment(s) retained`。 */
 export function coldRefAudioHintLine(sourcePacketId: number, count: number): string {
-  return `[Audio@#${sourcePacketId}] ${count} segments retained`;
+  return `[Audio@#${sourcePacketId}] ${count} segment${count === 1 ? '' : 's'} retained`;
 }
 
 // ---------------------------------------------------------------------------

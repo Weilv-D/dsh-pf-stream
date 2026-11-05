@@ -47,7 +47,6 @@ export class SchmittMachine {
   settleStartPtsMs: number | null = null;
   /** SETTLE 锁定后的防碎合并窗起点。 */
   mergeStartPtsMs: number | null = null;
-  lastAnchorGlobalId: number | null = null;
   /** SWITCH 后静态观察起点与 F_switch 待发标志。 */
   switchStaticSincePtsMs: number | null = null;
   fSwitchPending = false;
@@ -56,6 +55,10 @@ export class SchmittMachine {
     if (init) Object.assign(this, init);
   }
 
+  /**
+   * 全字段可序列化快照。gEma/emaWarmupLeft 为本机副本（生产链路的权威源在
+   * 采样器的 ClarityState），快照消费方（游标持久化）以 ClarityState 值覆盖。
+   */
   snapshot(): StateMachineSnapshot {
     return {
       state: this.state,
@@ -64,6 +67,9 @@ export class SchmittMachine {
       gEma: this.gEma,
       emaWarmupLeft: this.emaWarmupLeft,
       settleStartPtsMs: this.settleStartPtsMs,
+      mergeStartPtsMs: this.mergeStartPtsMs,
+      switchStaticSincePtsMs: this.switchStaticSincePtsMs,
+      fSwitchPending: this.fSwitchPending,
     };
   }
 

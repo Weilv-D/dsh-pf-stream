@@ -185,11 +185,19 @@ export async function handleToolCall(
           return mount ? { ...p, audio: mount } : p;
         })
       : packets;
+    // 缺少转写引擎时给一句可行动的说明：结果里只有状态码，模型不知道该去哪配置。
+    const hintLines = [...stream.hintLines];
+    if (stream.audio?.status === 'no_subtitle_asr_unconfigured') {
+      hintLines.push(
+        '未生成转写文本：该视频没有字幕，且未配置转写引擎。' +
+          '可在「设置 → 插件 → 视频理解」中下载本地转写模型（约 190 MB），或配置云端服务商密钥。',
+      );
+    }
     return {
       action: 'pf_stream',
       probe: probeResult,
       packets: packetsWithAudio,
-      hintLines: stream.hintLines,
+      hintLines,
       heartbeats: stream.heartbeats,
       telemetry: stream.telemetry,
       audio: stream.audio,

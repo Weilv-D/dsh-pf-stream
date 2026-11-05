@@ -63,6 +63,15 @@ function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '');
 }
 
+/**
+ * 转写端点：既接受「origin」也接受「origin/v1」两种填法，
+ * 避免用户在设置页把 /v1 填进去后出现 /v1/v1 双段。
+ */
+export function transcriptionUrl(baseUrl: string): string {
+  const base = normalizeBaseUrl(baseUrl);
+  return /\/v1$/i.test(base) ? `${base}/audio/transcriptions` : `${base}/v1/audio/transcriptions`;
+}
+
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
@@ -103,7 +112,7 @@ export async function transcribeVerbose(
   let response: Response;
   try {
     response = await fetchWithTimeout(
-      `${normalizeBaseUrl(settings.baseUrl)}/v1/audio/transcriptions`,
+      transcriptionUrl(settings.baseUrl),
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${settings.apiKey}` },
@@ -151,7 +160,7 @@ export async function transcribeBasic(
   let response: Response;
   try {
     response = await fetchWithTimeout(
-      `${normalizeBaseUrl(settings.baseUrl)}/v1/audio/transcriptions`,
+      transcriptionUrl(settings.baseUrl),
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${settings.apiKey}` },
@@ -193,12 +202,22 @@ export async function transcribeLocalCli(
   const audioFile = path.join(dir, 'chunk.mp3');
   try {
     await writeFile(audioFile, input.bytes);
-    // argv 模板：{audio}=音频路径 {out}=输出文件路径 {dir}=音频所在临时目录；
+    // argv 模板：{audio}=音频路径 {out}=输出文件路径 {dir}=音频所在临时目录
+    // {outbase}=输出基名（whisper.cpp 的 -of 用，产出 <base>.srt）；
     // 无 {audio} 令牌时音频路径追加在末尾
     const rawArgs = settings.args ?? [];
-    const usesAudioToken = rawArgs.includes('{audio}');
-    const outFile = rawArgs.includes('{out}') ? path.join(dir, 'cli-out.txt') : null;
-    const argv = rawArgs.map((a) => (a === '{audio}' ? audioFile : a === '{out}' ? outFile! : a === '{dir}' ? dir : a));
+    const usesAudioToken = rawArgs.some((arg) => arg.includes('{audio}'));
+    const outFile = rawArgs.some((arg) => arg.includes('{out}')) ? path.join(dir, 'cli-out.txt') : null;
+    const outBase = path.join(dir, 'chunk');
+    const usesOutBase = rawArgs.some((arg) => arg.includes('{outbase}'));
+    const usesDir = rawArgs.some((arg) => arg.includes('{dir}'));
+    const argv = rawArgs.map((arg) =>
+      arg
+        .split('{audio}').join(audioFile)
+        .split('{outbase}').join(outBase)
+        .split('{out}').join(outFile ?? path.join(dir, 'cli-out.txt'))
+        .split('{dir}').join(dir),
+    );
     if (!usesAudioToken) argv.push(audioFile);
     const stdout = await new Promise<string>((resolve, reject) => {
       // PYTHONUTF8：Python 系 CLI 在 GBK 控制台输出中文会抛 UnicodeEncodeError
@@ -227,9 +246,9 @@ export async function transcribeLocalCli(
         else reject(new AsrRequestError(`local_cli 退出码 ${code}`, 'ASR_NONZERO'));
       });
     });
-    // 契约：args 含 {out}/{dir} 令牌时结果按文件产物优先（CLI 的 stdout 可能只有进度杂讯）；
+    // 契约：args 含 {out}/{outbase}/{dir} 令牌时结果按文件产物优先（CLI 的 stdout 可能只有进度杂讯）；
     // 无令牌的零参 CLI 以 stdout 为主，音频同目录产物兜底
-    const expectsArtifacts = outFile !== null || rawArgs.includes('{dir}');
+    const expectsArtifacts = outFile !== null || usesOutBase || usesDir;
     let content = '';
     const readArtifact = async (): Promise<string> => {
       const candidates = [outFile, path.join(dir, 'chunk.srt'), path.join(dir, 'chunk.vtt'), path.join(dir, 'chunk.txt'), path.join(dir, 'chunk.json')];

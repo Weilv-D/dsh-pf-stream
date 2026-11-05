@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Video understanding",
+    "description": "Lets the agent watch videos: adaptive canvas sampling with subtitles or transcribed speech. Download a local model (~190MB) or add a cloud key on the plugin page."
+  }
+}

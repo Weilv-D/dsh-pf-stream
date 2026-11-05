@@ -98,7 +98,7 @@ describe('A7 Epoch 冷区台词保留', () => {
 
     // 冷区提示行带台词保留行
     const joined = second.hintLines.join('\n');
-    expect(joined).toMatch(/\[Audio@#\d+\] \d+ segments retained/);
+    expect(joined).toMatch(/\[Audio@#\d+\] \d+ segments? retained/);
 
     // 冷区引用包在 audioByPacket 中带 segments（Epoch 收敛后台词仍保留在冷区链上）
     const coldWithAudio = second.packets.filter((a) => {
