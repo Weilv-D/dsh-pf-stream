@@ -12,7 +12,7 @@ import path from 'node:path';
 import { runAudioSidecar } from '../../src/audio/sidecar.js';
 import { transcribeWindow } from '../../src/audio/asrRouter.js';
 import { probeVideo } from '../../src/stage0/probe.js';
-import { readTranscriptCache, videoFingerprint, writeTranscriptCache } from '../../src/audio/transcriptCache.js';
+import { engineFingerprint, readTranscriptCache, videoFingerprint, writeTranscriptCache } from '../../src/audio/transcriptCache.js';
 import type { AsrSettings, AudioSettings } from '../../src/audio/types.js';
 import { fixturePath } from './helpers.js';
 
@@ -155,9 +155,10 @@ describe('A8 软截止先行返回 + 后台补缓存', () => {
     const video = fixturePath('case_audio_silence.mp4');
     const probe = await probeVideo(video, { ffprobePath: 'ffprobe' });
     const { fn } = stubFetch(() => json({ text: '后台补齐的台词' }));
+    const cfg = settings({ cacheDir: cacheA8 });
 
     const first = await runAudioSidecar(
-      { videoPath: video, probe, ffmpegPath: 'ffmpeg', settings: settings({ cacheDir: cacheA8 }) },
+      { videoPath: video, probe, ffmpegPath: 'ffmpeg', settings: cfg },
       [0, 3000],
       Date.now() - 1,
     );
@@ -165,7 +166,7 @@ describe('A8 软截止先行返回 + 后台补缓存', () => {
     expect(first.segments).toEqual([]);
 
     // 后台转写与缓存回写完成后，指纹缓存可见
-    const fp = await videoFingerprint(video);
+    const fp = `${await videoFingerprint(video)}-${engineFingerprint(cfg.asr!)}`;
     await vi.waitFor(
       async () => {
         const cached = await readTranscriptCache(cacheA8, fp);
@@ -177,7 +178,7 @@ describe('A8 软截止先行返回 + 后台补缓存', () => {
 
     const callsBefore = fn.mock.calls.length;
     const second = await runAudioSidecar(
-      { videoPath: video, probe, ffmpegPath: 'ffmpeg', settings: settings({ cacheDir: cacheA8 }) },
+      { videoPath: video, probe, ffmpegPath: 'ffmpeg', settings: cfg },
       [0, 3000],
       Date.now() + 8000,
     );
@@ -194,7 +195,8 @@ describe('A9 部分覆盖只补缺口', () => {
     const video = fixturePath('case_audio_silence.mp4');
     const probe = await probeVideo(video, { ffprobePath: 'ffprobe' });
     const { calls } = stubFetch(() => json({ text: '新补台词' }));
-    const fp = await videoFingerprint(video);
+    const cfg = settings({ cacheDir: cacheA9 });
+    const fp = `${await videoFingerprint(video)}-${engineFingerprint(cfg.asr!)}`;
     await writeTranscriptCache(cacheA9, fp, [
       {
         startMs: 0,

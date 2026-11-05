@@ -16,6 +16,7 @@ import { transcribeBasic, transcribeVerbose, AsrRequestError, type RawSegment } 
 import { guardSegments } from './hallucinationGuard.js';
 import {
   cachedSegmentsFor,
+  engineFingerprint,
   mergeInterval,
   missingRanges,
   videoFingerprint,
@@ -131,7 +132,7 @@ export async function transcribeWindow(
   vad: VadResult | null,
   options: AsrRunOptions,
 ): Promise<AsrRunResult> {
-  const fingerprint = await videoFingerprint(videoPath);
+  const fingerprint = `${await videoFingerprint(videoPath)}-${engineFingerprint(options.settings)}`;
   let intervals: TranscriptInterval[] = [];
   let cacheHit = false;
   if (options.cacheEnabled) {

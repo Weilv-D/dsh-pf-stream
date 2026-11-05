@@ -64,14 +64,17 @@ window.__ModuleLoader__.load({
       engineLocal: '仅本地',
       engineCloud: '仅云端',
       engineOff: '不转写',
-      engineHint: '自动：已配置云端密钥时使用云端，否则使用本地模型。',
+      engineHint: '自动：云端配置完整时用云端（更快，按量计费）；否则用本地模型。',
       language: '语言',
       languageAuto: '自动识别',
       modelSize: '本地模型大小',
       recommended: '推荐',
       threads: 'CPU 线程数（0 为自动）',
       cache: '转写缓存',
-      clearCache: '清理缓存',
+      clearCache: '清理转写缓存',
+      activeLocal: '本地',
+      activeCloud: '云端',
+      activeNone: '未启用',
       cacheCleared: '缓存已清理',
       settingsReadonly: '该配置由宿主管理，请在配置文件中修改。',
       badgeReady: '转写可用',
@@ -134,14 +137,17 @@ window.__ModuleLoader__.load({
       engineLocal: 'Local only',
       engineCloud: 'Cloud only',
       engineOff: 'No transcription',
-      engineHint: 'Auto: use the cloud when a key is configured, otherwise the local model.',
+      engineHint: 'Auto: use the cloud when fully configured (faster, billed per use); otherwise the local model.',
       language: 'Language',
       languageAuto: 'Detect automatically',
       modelSize: 'Local model size',
       recommended: 'recommended',
       threads: 'CPU threads (0 = auto)',
       cache: 'Transcript cache',
-      clearCache: 'Clear cache',
+      clearCache: 'Clear transcript cache',
+      activeLocal: 'Local',
+      activeCloud: 'Cloud',
+      activeNone: 'Off',
       cacheCleared: 'Cache cleared',
       settingsReadonly: 'This config is managed by the host; edit the config file instead.',
       badgeReady: 'Transcription ready',
@@ -335,6 +341,74 @@ window.__ModuleLoader__.load({
         fontSize: 13,
         outline: 'none',
       },
+      selectRoot: { position: 'relative' },
+      selectTrigger: {
+        width: '100%',
+        boxSizing: 'border-box',
+        border: '.5px solid ' + PALETTE.hairline,
+        background: PALETTE.glass,
+        color: PALETTE.text,
+        borderRadius: 9,
+        height: 32,
+        padding: '0 10px',
+        fontSize: 13,
+        fontFamily: 'inherit',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+        cursor: 'pointer',
+        textAlign: 'left',
+      },
+      selectTriggerOpen: {
+        borderColor: 'color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent)',
+      },
+      selectValue: {
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      },
+      chevron: {
+        flex: '0 0 auto',
+        width: 6,
+        height: 6,
+        borderRight: '1.5px solid ' + PALETTE.sub,
+        borderBottom: '1.5px solid ' + PALETTE.sub,
+        transform: 'rotate(45deg) translateY(-2px)',
+        transition: 'transform .16s ease',
+      },
+      chevronOpen: { transform: 'rotate(-135deg) translateY(-2px)' },
+      selectMenu: {
+        position: 'absolute',
+        top: 'calc(100% + 6px)',
+        left: 0,
+        right: 0,
+        zIndex: 40,
+        padding: 4,
+        borderRadius: 10,
+        border: '.5px solid ' + PALETTE.hairline,
+        background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-2) 92%, transparent)',
+        backdropFilter: PALETTE.blur,
+        WebkitBackdropFilter: PALETTE.blur,
+        boxShadow: '0 12px 32px rgba(0, 0, 0, .38)',
+        maxHeight: 240,
+        overflowY: 'auto',
+      },
+      selectOption: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+        padding: '7px 9px',
+        borderRadius: 7,
+        fontSize: 13,
+        color: PALETTE.text,
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      },
+      selectOptionHover: { background: 'color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent)' },
+      selectOptionActive: { background: 'color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent)' },
+      selectCheck: { color: PALETTE.sub, fontSize: 12 },
       section: {
         border: '.5px solid ' + PALETTE.hairline,
         borderRadius: 14,
@@ -442,6 +516,97 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function SelectField(props) {
+      const options = props.options || [];
+      const [open, setOpen] = React.useState(false);
+      const [hover, setHover] = React.useState(-1);
+      const rootRef = React.useRef(null);
+      const selectedIndex = options.findIndex(function (item) { return item.value === props.value; });
+      const current = selectedIndex >= 0 ? options[selectedIndex] : options[0];
+
+      React.useEffect(function () {
+        if (!open) return undefined;
+        function close(event) {
+          if (rootRef.current && !rootRef.current.contains(event.target)) setOpen(false);
+        }
+        document.addEventListener('mousedown', close);
+        return function () { document.removeEventListener('mousedown', close); };
+      }, [open]);
+
+      function commit(index) {
+        const option = options[index];
+        if (!option) return;
+        setOpen(false);
+        if (option.value !== props.value) props.onChange(option.value);
+      }
+
+      function onTriggerKey(event) {
+        if (event.key === 'Escape') { setOpen(false); return; }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          if (!open) { setOpen(true); setHover(Math.max(0, selectedIndex)); return; }
+          const step = event.key === 'ArrowDown' ? 1 : -1;
+          setHover(function (previous) {
+            const from = previous < 0 ? selectedIndex : previous;
+            return Math.min(options.length - 1, Math.max(0, from + step));
+          });
+          return;
+        }
+        if ((event.key === 'Enter' || event.key === ' ') && open) {
+          event.preventDefault();
+          commit(hover >= 0 ? hover : selectedIndex);
+        }
+      }
+
+      return h(
+        'div',
+        { style: styles.selectRoot, ref: rootRef },
+        h(
+          'button',
+          {
+            type: 'button',
+            style: Object.assign({}, styles.selectTrigger, open ? styles.selectTriggerOpen : null),
+            'aria-haspopup': 'listbox',
+            'aria-expanded': open,
+            onClick: function () {
+              setOpen(!open);
+              if (!open) setHover(Math.max(0, selectedIndex));
+            },
+            onKeyDown: onTriggerKey,
+          },
+          h('span', { style: styles.selectValue }, current ? current.label : ''),
+          h('span', { style: Object.assign({}, styles.chevron, open ? styles.chevronOpen : null) }),
+        ),
+        open
+          ? h(
+              'div',
+              { style: styles.selectMenu, role: 'listbox' },
+              options.map(function (item, index) {
+                return h(
+                  'div',
+                  {
+                    key: item.value,
+                    role: 'option',
+                    'aria-selected': item.value === props.value,
+                    style: Object.assign(
+                      {},
+                      styles.selectOption,
+                      index === hover ? styles.selectOptionHover : null,
+                      item.value === props.value ? styles.selectOptionActive : null,
+                    ),
+                    onMouseEnter: function () { setHover(index); },
+                    onMouseDown: function (event) { event.preventDefault(); },
+                    onClick: function () { commit(index); },
+                  },
+                  h('span', null, item.label),
+                  item.value === props.value ? h('span', { style: styles.selectCheck }, '✓') : null,
+                );
+              }),
+            )
+          : null,
+      );
+    }
+
     function useStatus() {
       const [status, setStatus] = React.useState(null);
       const [error, setError] = React.useState('');
@@ -528,6 +693,19 @@ window.__ModuleLoader__.load({
         job && ['preparing', 'downloading', 'verifying', 'extracting'].indexOf(job.phase) >= 0;
       const preset = status.cloud.preset;
       const custom = status.cloud.editable;
+      const activeKind = status.active
+        ? status.active.kind
+        : status.mode === 'local'
+          ? 'local'
+          : status.mode === 'cloud'
+            ? 'cloud'
+            : cloudReady
+              ? 'cloud'
+              : localReady
+                ? 'local'
+                : 'none';
+      const activeLabel =
+        activeKind === 'local' ? t('activeLocal') : activeKind === 'cloud' ? t('activeCloud') : t('activeNone');
 
       const engineModes = [
         ['auto', t('engineAuto')],
@@ -543,7 +721,7 @@ window.__ModuleLoader__.load({
           'div',
           { style: styles.headerRow },
           h('h3', { style: styles.title }, t('panelTitle')),
-          h('span', { style: styles.badge }, ready ? t('badgeReady') : t('badgePending')),
+          h('span', { style: styles.badge }, ready ? t('badgeReady') + ' · ' + activeLabel : t('badgePending')),
           h('span', { style: { flex: '1 1 auto' } }),
           h(
             'button',
@@ -644,22 +822,17 @@ window.__ModuleLoader__.load({
             { style: styles.row },
             h('div', { style: styles.grow },
               h('label', { style: styles.label }, t('preset')),
-              h(
-                'select',
-                {
-                  style: styles.input,
-                  value: preset,
-                  onChange: function (event) {
-                    const value = event.target.value;
-                    void run('preset', function () {
-                      return call('/config', { field: 'preset', value: value });
-                    });
-                  },
-                },
-                (status.presets || []).map(function (item) {
-                  return h('option', { key: item.id, value: item.id }, item.label);
+              h(SelectField, {
+                value: preset,
+                options: (status.presets || []).map(function (item) {
+                  return { value: item.id, label: item.label };
                 }),
-              ),
+                onChange: function (value) {
+                  void run('preset', function () {
+                    return call('/config', { field: 'preset', value: value });
+                  });
+                },
+              }),
             ),
             custom
               ? h('div', { style: styles.grow },
@@ -771,22 +944,17 @@ window.__ModuleLoader__.load({
             { style: Object.assign({}, styles.grid2, { marginTop: 10 }) },
             h('div', null,
               h('label', { style: styles.label }, t('engine')),
-              h(
-                'select',
-                {
-                  style: styles.input,
-                  value: (status.config && status.config.engine) || status.mode || 'auto',
-                  onChange: function (event) {
-                    const value = event.target.value;
-                    void run('engine', function () {
-                      return call('/config', { field: 'engine', value: value });
-                    });
-                  },
-                },
-                engineModes.map(function (item) {
-                  return h('option', { key: item[0], value: item[0] }, item[1]);
+              h(SelectField, {
+                value: (status.config && status.config.engine) || status.mode || 'auto',
+                options: engineModes.map(function (item) {
+                  return { value: item[0], label: item[1] };
                 }),
-              ),
+                onChange: function (value) {
+                  void run('engine', function () {
+                    return call('/config', { field: 'engine', value: value });
+                  });
+                },
+              }),
             ),
             h('div', null,
               h('label', { style: styles.label }, t('language')),
@@ -804,25 +972,20 @@ window.__ModuleLoader__.load({
             ),
             h('div', null,
               h('label', { style: styles.label }, t('modelSize')),
-              h(
-                'select',
-                {
-                  style: styles.input,
-                  value: (status.config && status.config.modelId) || status.modelId,
-                  onChange: function (event) {
-                    const value = event.target.value;
-                    void run('modelId', function () {
-                      return call('/config', { field: 'modelId', value: value });
-                    });
-                  },
-                },
-                [['base-q5_1', 'base · 60 MB'], ['small-q5_1', 'small · 190 MB'], ['medium-q5_0', 'medium · 540 MB']].map(
+              h(SelectField, {
+                value: (status.config && status.config.modelId) || status.modelId,
+                options: [['base-q5_1', 'base · 60 MB'], ['small-q5_1', 'small · 190 MB'], ['medium-q5_0', 'medium · 540 MB']].map(
                   function (item) {
                     const label = item[1] + (item[0] === 'small-q5_1' ? ' · ' + t('recommended') : '');
-                    return h('option', { key: item[0], value: item[0] }, label);
+                    return { value: item[0], label: label };
                   },
                 ),
-              ),
+                onChange: function (value) {
+                  void run('modelId', function () {
+                    return call('/config', { field: 'modelId', value: value });
+                  });
+                },
+              }),
             ),
             h('div', null,
               h('label', { style: styles.label }, t('threads')),

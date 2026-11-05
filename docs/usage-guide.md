@@ -109,13 +109,13 @@ The engine is chosen by `audio.asr.engine`, default `auto`:
 
 | `engine` | Behavior |
 | --- | --- |
-| `auto` (default) | Use a working cloud key when present, otherwise the installed local engine; otherwise no transcription |
+| `auto` (default) | Cloud when key, endpoint and model are all set (faster, billed per use); otherwise the installed local engine; otherwise no transcription |
 | `local` | Local engine only |
 | `cloud` | Cloud only |
 | `off` | Transcription off (subtitles are still extracted) |
 | `legacy` | 0.2.x semantics: follow the old `audio.asr.provider` values |
 
-Both local and cloud are configured in the plugin page, not by hand-editing config. Transcript text stays in the original language. Speech mounts onto the matching packet:
+The engine in use is shown in the plugin page badge (for example, "Transcription ready · Cloud"). Both local and cloud are configured in the plugin page, not by hand-editing config. Transcript text stays in the original language. Speech mounts onto the matching packet:
 
 ```text
 Audio @Packet #42: [12.1s-12.9s] "we spent three years on this" | [13.0s-13.4s] "and today we can finally talk"
@@ -129,7 +129,9 @@ Audio @Packet #42: [12.1s-12.9s] "we spent three years on this" | [13.0s-13.4s] 
 
 1. **Status cards**: ffmpeg, local engine, cloud key — each with an actionable verdict.
 2. **Two setup paths**: one-click local model download (progress and cancel), or a cloud key (presets plus a custom compatible endpoint).
-3. **Advanced**: engine policy, language, model size, threads, cache usage and clearing.
+3. **Advanced**: engine policy, language, model size, threads, transcript cache usage and clearing.
+
+"Clear transcript cache" removes only the per-file, per-engine transcript JSON; it can be regenerated. Canvas images live in the host attachment store and belong to session history, so this button leaves them alone. Model and engine files are also kept; use "Download local model" again to reinstall.
 
 "Test transcription" runs a real short audio clip through the whole chain, not just a file existence check.
 

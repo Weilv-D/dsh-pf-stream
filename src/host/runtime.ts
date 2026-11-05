@@ -11,6 +11,7 @@ import type { PfStreamPluginConfig } from '../types.js';
 import { CLOUD_PRESETS, cloudPreset, managedPaths, modelPreset } from '../asr/catalog.js';
 import { detectLocalEngine, type LocalEngineSnapshot } from '../asr/detect.js';
 import type { AsrRuntimeFacts } from '../asr/engine.js';
+import { resolveAsr } from '../asr/engine.js';
 import { LocalAsrInstaller, type InstallJob, type InstallTarget } from '../asr/install.js';
 
 export interface CredentialsService {
@@ -103,6 +104,12 @@ export interface AsrStatus {
   /** profile 里的配置条目 id（能写入时非 null）。 */
   configNamespace: string | null;
   configWritable: boolean;
+  /** 当前实际会使用的引擎（auto 解析结果），供页面如实显示。 */
+  active: {
+    kind: 'cloud' | 'local' | 'none';
+    preset: string;
+    presetLabel: string;
+  };
   /** 一句话结论：现在能否转写。 */
   ready: boolean;
   summary: string;
@@ -319,25 +326,36 @@ export class HostRuntime {
     const mode = config.audio.asr.engine ?? 'auto';
     const namespace = this.resolveConfigNamespace();
 
-    const cloudReady = keyConfigured && cloudBase !== '' && cloudModel !== '';
-    const localReady = detection.ready;
     const legacy = config.audio.asr.provider;
-    const legacyReady =
-      legacy !== 'none' &&
-      (legacy === 'local_cli' || (config.audio.asr.apiKey?.trim() ?? '') !== '' || keyConfigured);
 
-    const ready =
-      config.audio.mode !== 'off' &&
-      mode !== 'off' &&
-      (mode === 'cloud' ? cloudReady : mode === 'local' ? localReady : cloudReady || localReady || legacyReady);
+    const resolution = resolveAsr(
+      config.audio.asr,
+      undefined,
+      process.env,
+      {
+        detection,
+        keys,
+        localTimeoutMs: config.audio.asr.local?.timeoutMs ?? 300_000,
+        localThreads: config.audio.asr.local?.threads ?? 0,
+      },
+    );
+
+    const ready = config.audio.mode !== 'off' && resolution.settings !== null;
 
     const summary = ready
-      ? cloudReady && (mode === 'cloud' || mode === 'auto')
+      ? resolution.kind === 'cloud'
         ? `云端转写就绪（${preset.label}）`
         : `本地转写就绪（${detection.engine}）`
       : mode === 'off'
         ? '转写已关闭'
         : '还不能转写语音：安装本地模型或配置云端密钥';
+
+    const activeKind =
+      resolution.kind === 'legacy'
+        ? resolution.settings?.provider === 'local_cli'
+          ? 'local'
+          : 'cloud'
+        : resolution.kind;
 
     return {
       engine: detection,
@@ -365,6 +383,11 @@ export class HostRuntime {
       install: this.installer.current(),
       configNamespace: namespace,
       configWritable: namespace !== null,
+      active: {
+        kind: activeKind,
+        preset: preset.id,
+        presetLabel: preset.label,
+      },
       ready,
       summary,
     };
@@ -377,7 +400,7 @@ export class HostRuntime {
     let bytes = 0;
     try {
       for (const name of readdirSync(dir)) {
-        if (!/^[0-9a-f]{64}\.(json|tmp)$/.test(name) && !/\.json\.tmp$/.test(name)) continue;
+        if (!/^[0-9a-f]{32}(-[0-9a-f]{16})?\.(json|tmp)$/.test(name) && !/\.json\.tmp$/.test(name)) continue;
         const path = join(dir, name);
         try {
           const size = statSync(path).size;
@@ -403,7 +426,7 @@ function cacheFileBytes(dir: string): number {
   let bytes = 0;
   try {
     for (const name of readdirSync(dir)) {
-      if (!/^[0-9a-f]{64}\.(json|tmp)$/.test(name) && !/\.json\.tmp$/.test(name)) continue;
+      if (!/^[0-9a-f]{32}(-[0-9a-f]{16})?\.(json|tmp)$/.test(name) && !/\.json\.tmp$/.test(name)) continue;
       try {
         bytes += statSync(join(dir, name)).size;
       } catch {

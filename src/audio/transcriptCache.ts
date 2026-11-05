@@ -1,7 +1,8 @@
 /**
  * 磁盘转写缓存。
  *
- * 键 = sha256(小写绝对路径 + mtime + size)（视频文件再生成或移动后自动失效）。
+ * 键 = sha256(小写绝对路径 + mtime + size) + 引擎指纹（服务商/模型/语言）。
+ * 视频变化或换引擎都会自动失效；密钥不参与指纹。
  * 值 = 已完成转写的区间列表（subtitle 提取为本地快操作，不走缓存）。
  */
 
@@ -10,9 +11,9 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
-import type { TranscriptSegment } from './types.js';
+import type { AsrSettings, TranscriptSegment } from './types.js';
 
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 
 export interface TranscriptInterval {
   startMs: number;
@@ -36,6 +37,18 @@ export async function videoFingerprint(videoPath: string): Promise<string> {
     .update(`|${Math.floor(st.mtimeMs)}|${st.size}`)
     .digest('hex');
   return digest.slice(0, 32);
+}
+
+/**
+ * 引擎指纹：同一段音频用本地或云端得到的结果不同，缓存不能混用。
+ * 只含影响转写结果的参数；apiKey 不参与（换密钥不失效）。
+ */
+export function engineFingerprint(settings: AsrSettings): string {
+  const digest = createHash('sha256')
+    .update(`${settings.provider}|${settings.baseUrl ?? ''}|${settings.model ?? ''}|${settings.language}`)
+    .update(`|${(settings.args ?? []).join('\u0001')}`)
+    .digest('hex');
+  return digest.slice(0, 16);
 }
 
 function cacheFileFor(cacheDir: string, fingerprint: string): string {

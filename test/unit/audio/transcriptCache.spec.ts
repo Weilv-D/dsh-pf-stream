@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   cachedSegmentsFor,
+  engineFingerprint,
   mergeInterval,
   missingRanges,
   readTranscriptCache,
@@ -12,7 +13,7 @@ import {
   writeTranscriptCache,
   type TranscriptInterval,
 } from '../../../src/audio/transcriptCache.js';
-import type { TranscriptSegment } from '../../../src/audio/types.js';
+import type { AsrSettings, TranscriptSegment } from '../../../src/audio/types.js';
 import { fixturePath } from '../../integration/helpers.js';
 
 const seg = (id: number, startMs: number, text: string): TranscriptSegment => ({
@@ -40,6 +41,31 @@ describe('A9 转写缓存', () => {
     expect(a).toBe(b);
     utimesSync(copy, new Date(), new Date(Date.now() + 5000));
     expect(await videoFingerprint(copy)).not.toBe(a);
+  });
+
+  it('engineFingerprint：本地与云端不共用缓存，密钥不参与', () => {
+    const local: AsrSettings = {
+      provider: 'local_cli',
+      baseUrl: null,
+      model: 'C:/tools/whisper-cli.exe',
+      apiKey: null,
+      language: 'auto',
+      args: ['-m', 'model.bin'],
+      timeoutMs: 300000,
+      maxConcurrency: 1,
+    };
+    const cloud: AsrSettings = {
+      provider: 'openai_verbose',
+      baseUrl: 'https://api.example.com',
+      model: 'whisper-1',
+      apiKey: 'sk-a',
+      language: 'auto',
+      args: null,
+      timeoutMs: 20000,
+      maxConcurrency: 2,
+    };
+    expect(engineFingerprint(local)).not.toBe(engineFingerprint(cloud));
+    expect(engineFingerprint(cloud)).toBe(engineFingerprint({ ...cloud, apiKey: 'sk-b' }));
   });
 
   it('write/read 原子往返；坏文档返回 null', async () => {
