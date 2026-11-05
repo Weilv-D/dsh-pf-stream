@@ -59,14 +59,6 @@ Ask your agent in plain language:
 
 Parameters, return content, and session behavior are covered in the [usage guide](docs/usage-guide.md).
 
-## Technical highlights
-
-- Canvases align to the 42px superpixel grid, billed as `r×(c+1)+2`; each packet bills ≤530 tokens.
-- Dual-scale sampling: 336² process units during motion, 672² freeze-frame units at settle, driven by a Schmitt four-state machine.
-- Deterministic inspection and streaming perception share one canvas spec; output stays consistent across channels.
-- Two-level history with Epoch Compaction: history images keep identical bytes across turns, keeping the Prefix KV-Cache prefix stable.
-- Host contract self-check (`pnpm verify:host`) covers schema shape, the keyword subset, and the dependency boundary.
-
 ## Documentation
 
 - [Usage guide](docs/usage-guide.md): action routing, parameters, call examples, session behavior, return content, canvas billing, configuration, error codes.
