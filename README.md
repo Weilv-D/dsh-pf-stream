@@ -2,36 +2,41 @@
 
 **中文** | [English](README.en.md)
 
-DeepSeek Harness（DSH）视频感知插件。模型用一个工具即可「看」本地视频：
+DeepSeek Harness（DSH）视频感知插件。模型调用一个工具即可「看」本地视频：
 
-- **连续事件** → 自适应流式采样。运动时按位移积分抽低 token 过程单元；停稳与顿挫波峰时定格高清焦点单元。
-- **可疑时间点** → 确定性检视。能力：元数据探测、指定时间戳抽帧、均匀切片、局部 RoI 放大复核。
+- **连续事件** → 自适应流式采样。运动时按位移积分抽取低 token 过程单元；停稳与清晰度波峰时定格高清焦点单元。
+- **指定位置** → 确定性检视。元数据探测、指定时间戳抽帧、均匀切片、局部 RoI 放大。
 
 全部画布对齐 DeepSeek-V4.1-Flash 视觉编码管线：42px 超像素网格，计费 `r×(c+1)+2`。四种形态计费均 ≤530 token，满足单图 1024 token 上限。服务端按画布原始分辨率计量。
 
-## 能力路由
+## 工具与 action 路由
 
-一个主工具 `dsh-pf-stream`，统一 `intent.action` 路由：
+一个主工具 `dsh-pf-stream`，按 `intent.action` 路由：
 
 | action | 引擎 | 用途 |
 | --- | --- | --- |
-| `pf_stream`（默认） | 动态流式采样 | 运动中抽 336² 过程单元（P）；停稳/波峰定格 672² 焦点单元（F）。施密特四状态机 + 双层自适应调节（意图基准 + 内容自闭环 R1-R4） |
-| `timestamps` | 确定性检视 | 指定时间戳单帧/组合高清检视，支持 `roi_hint` 局部放大 |
+| `pf_stream`（缺省） | 动态流式采样 | 运动中抽 336² 过程单元（P）；停稳与波峰定格 672² 焦点单元（F）。施密特四状态机 + 双层自适应调节 |
+| `timestamps` | 确定性检视 | 指定时间戳单帧或组合高清检视，支持 `roi_hint` 局部放大 |
 | `uniform` | 确定性检视 | 固定步长或目标帧数均匀切片 |
-| `probe` | 确定性检视 | 仅元数据（显示宽高/旋转/末帧 PTS/流摘要），零视觉 token |
+| `probe` | 确定性检视 | 仅返回元数据（显示宽高、旋转、末帧 PTS、流摘要），零视觉 token |
 
 ## 安装
 
 ### 1. 安装插件
 
-- 在 DSH 插件管理器中搜索 `dsh-pf-stream`，安装最新版本。
-- 或直接对智能体说「安装插件 dsh-pf-stream」，智能体经 plugin_manager 完成同一流程。
+任选一种方式：
 
-安装由宿主执行：宿主经 pnpm 安装包，读取 `cordis.patch.yml` 挂载插件。peer 依赖 `@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 由宿主运行时解析；运行时直接依赖仅 `pngjs`，画布 PNG 编码参数固定，输出字节幂等。
+- DSH 插件管理器中搜索 `dsh-pf-stream`，安装最新版本。
+- 对智能体说「安装插件 dsh-pf-stream」，智能体经 plugin_manager 完成同一流程。
+- 宿主环境手动安装：`pnpm add dsh-pf-stream`，再按仓库根 `cordis.patch.yml` 声明挂载。
 
-### 2. 准备 ffmpeg 与 ffprobe
+依赖说明：`@deepseek-ai/cordis` 与 `@deepseek-ai/schemastery` 为 peer 依赖，由宿主运行时提供。运行时直接依赖仅 `pngjs`，无原生模块。
 
-任选一种安装方式：
+### 2. 安装 ffmpeg 与 ffprobe
+
+插件经子进程调用 `ffmpeg` 解码视频帧，调用 `ffprobe` 读取媒体元数据。二者必须可用。
+
+包管理器安装（自动进入 PATH）：
 
 ```bash
 winget install Gyan.FFmpeg   # Windows
@@ -39,21 +44,60 @@ brew install ffmpeg          # macOS
 sudo apt install ffmpeg      # Debian / Ubuntu
 ```
 
-也可从 [ffmpeg.org](https://ffmpeg.org/download.html) 下载解压，用环境变量指向 `bin` 目录。可执行文件定位顺序：插件配置 `ffmpegPath` / `ffprobePath` → `DSH_FFMPEG_PATH` / `FFMPEG_PATH` → `DSH_FFMPEG_DIR` → `~/.dsh/tools/ffmpeg/bin` → `~/.dsh/bin` → `PATH`。
+手动安装：从 [ffmpeg.org](https://ffmpeg.org/download.html) 下载解压，记下 `bin` 目录路径。
+
+可执行文件定位顺序（`ffmpeg` 与 `ffprobe` 同序）：
+
+1. 插件配置 `ffmpegPath` / `ffprobePath`
+2. 环境变量 `DSH_FFMPEG_PATH` / `FFMPEG_PATH`（精确路径或其所在目录）
+3. 环境变量 `DSH_FFMPEG_DIR`（内含两个可执行文件的目录）
+4. `~/.dsh/tools/ffmpeg/bin` 与 `~/.dsh/bin`
+5. 裸名交给操作系统 `PATH`
+
+`ffmpeg` 与 `ffprobe` 安装位置分离时，用配置项 `ffmpegPath` / `ffprobePath` 分别指定。可解码格式由本机 ffmpeg 决定；音轨与字幕流被忽略。
 
 ### 3. 验证安装
 
-安装成功后，模型侧出现工具 `dsh-pf-stream`。用任一本地视频探测元数据：
+安装成功后，模型侧出现工具 `dsh-pf-stream`。对任一本地视频探测元数据：
 
 ```json
 { "video_path": "D:/videos/demo.mp4", "intent": { "action": "probe" } }
 ```
 
-返回显示宽高、时长、帧率，即安装成功。
+返回显示宽高、时长、帧率，即安装成功。路径无效时返回 `PFSTREAM_PROBE_NOT_FOUND`；可执行文件缺失时返回 `PFSTREAM_SPAWN_FAILED`。
 
-## 使用
+## 工具调用
 
-流式感知（问「画面里写了什么」）：
+### intent 字段
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `action` | `pf_stream` \| `timestamps` \| `uniform` \| `probe` | 缺省 `pf_stream` |
+| `mode` | `dense` \| `standard` \| `sparse` | P 单元密度档位，缺省 `standard` |
+| `focus` | `motion` \| `detail` \| `balanced` | 采样倾向，缺省 `balanced` |
+| `roi_hint` | `{x, y, w, h}` | 归一化 ROI（[0,1]），作用于感知加权与视窗裁剪 |
+| `full_frame` | boolean | 强制全画幅采样，禁用 1:1 质心裁剪 |
+| `pts_window` | `[start_ms, end_ms]` | 处理时间窗（PTS 毫秒），越界钳制到流末帧 |
+| `timestamps_ms` | number[] | `timestamps` 模式的目标时间戳（毫秒），越界钳制 |
+| `interval_ms` | number | `uniform` 模式抽帧间隔（毫秒），必须为正数 |
+| `frame_count` | number | `uniform` 模式目标帧数，受 `maxFramesPerCall` 钳制 |
+| `max_packets` | number | 本次调用画布包数上限，受 `maxPacketsPerCall` 钳制 |
+| `max_tokens_budget` | number | 本次调用视觉 token 预算（≥274），受 `maxTokensBudgetPerCall` 钳制 |
+| `reset` | boolean | 先重置会话意图为默认基准，再合并本次传入字段 |
+
+`uniform` 模式要求 `interval_ms` 或 `frame_count` 至少一个，缺失时返回 `PFSTREAM_UNIFORM_PARAMS_MISSING`。
+
+### 顶层便捷字段
+
+参数顶层接受 9 个视频检视领域常见字段，入口适配器将其归一化为标准 `intent` 结构：
+
+`start_time`、`end_time`、`time_range`、`timestamps`、`fps`、`interval`、`num_frames`、`crop`、`probe_only`。
+
+时间类字段按秒或毫秒自动判别；`crop` 接受归一化或像素坐标（像素按显示宽高换算）。
+
+### 调用示例
+
+流式感知（分析画面内容与事件演变）：
 
 ```json
 {
@@ -62,7 +106,7 @@ sudo apt install ffmpeg      # Debian / Ubuntu
 }
 ```
 
-定点复核（流式结果中 12.9s 处发现文字）：
+定点复核（流式结果中发现 12.9s 处有文字，放大确认）：
 
 ```json
 {
@@ -75,68 +119,114 @@ sudo apt install ffmpeg      # Debian / Ubuntu
 }
 ```
 
-顶层同时接受视频检视领域常见便捷字段：`start_time` / `end_time` / `timestamps` / `fps` / `interval` / `num_frames` / `crop` / `probe_only`。入口适配器将其归一化为标准 `intent` 结构。
+均匀切片（每 2 秒一帧概览）：
+
+```json
+{
+  "video_path": "D:/videos/demo.mp4",
+  "intent": { "action": "uniform", "interval_ms": 2000, "focus": "motion" }
+}
+```
+
+### 会话级行为
+
+- **意图持久化**：`mode`、`focus`、`roi_hint`、`full_frame` 跨调用字段级合并；`reset: true` 先清空再合并本次新字段。
+- **游标续窗**：同视频再次流式调用，从上次消费位置继续；到达流末帧后 `stopReason` 为 `end_of_stream`。
+- **会话标识**：取宿主调用的会话 ID；宿主未提供时归并到 `default` 会话。
+- **并发串行化**：同会话的调用按到达顺序串行执行。
+- **两级历史引用**：热区（最近 2 包）整条带复用；冷区至多 4 个 F 锚点独立载体（672²，274 token）复用。
+- **Epoch Compaction**：每 6 包批量热转冷，多轮对话中历史位置图像字节保持不变，Prefix KV-Cache 前缀稳定。
+- **超时与取消**：单次调用最长阻塞 15 分钟；取消为协作式，解码循环在下一个帧边界停止。
 
 ## 返回内容
 
-每次调用返回一个或多个画布包：
+每次调用返回一个文本块与若干图像内容块：
 
-- **PNG 画布**：四形态之一（见下表）。单元间双色隔离线阻断相邻边缘特征串扰；可选超像素角标渲染单元编号。画布 PNG 同时作为图像内容块进入模型上下文（单次调用至多 `maxImagesPerCall` 张）。
-- **结构化元数据**：`packet_id`、每单元 PTS、token 网格 bbox、源采样 bbox、双载体 SHA-256。
-- **时序提示行**：模型可读的 P/F 单元时间轴（如 `[Packet #42 | Anchor: #105 | #101(P, 12.1s, Left-Top) → …]`）。
-
-会话级能力：
-
-- 意图跨调用持久化。
-- 流式游标续窗：同视频下次调用从上次位置继续。
-- 两级历史引用：热区最近 2 包整条带复用；冷区至多 4 个 F 锚点独立载体复用。
-- Epoch Compaction：默认 6 包窗口批量热转冷，保持多轮对话 Prefix KV-Cache 前缀稳定。
+- **文本块**：结构化元数据 JSON。含每个画布包的 `packet_id`、形态、触发路径、双载体 SHA-256、逐单元 PTS 与 bbox、遥测（解码耗时、ffmpeg 调用参数、控制参数快照、预检结果）。
+- **图像内容块**：每包一张画布 PNG，提交宿主附件服务后进入模型上下文。单次至多回传 `maxImagesPerCall` 张，超出时保留最新包，旧包仅回元数据。
+- **时序提示行**：模型可读的 P/F 单元时间轴，如 `[Packet #42 | Anchor: #105 | #101(P, 12.1s, Left-Top) → …]`。
+- **心跳**：长静止期间每 5 秒（PTS 域）一条心跳记录，触发状态体检。
 
 ## 画布与计费
 
-| 形态 | 布局 | Token |
-| --- | --- | --- |
-| `FORM_1_STANDARD_STRIP` | 4P + 1F，1344×672 | 530 |
-| `FORM_2_COMPACT_4P` | 4P，672×672 | 274 |
-| `FORM_3_COMPACT_1F` | 1F，672×672 | 274 |
-| `FORM_4_PARTIAL_STRIP` | 1-3P + 1F，1344×672 | 530 |
+| 形态 | 布局 | 尺寸 | Token |
+| --- | --- | --- | --- |
+| `FORM_1_STANDARD_STRIP` | 4P + 1F | 1344×672 | 530 |
+| `FORM_2_COMPACT_4P` | 4P | 672×672 | 274 |
+| `FORM_3_COMPACT_1F` | 1F | 672×672 | 274 |
+| `FORM_4_PARTIAL_STRIP` | 1-3P + 1F | 1344×672 | 530 |
 
-## 画布样例
-
-`FORM_1` 标准条带：左半 4 个过程单元（P），右半 1 个焦点单元（F）。
-
-![FORM_1 标准条带](https://raw.githubusercontent.com/Weilv-D/dsh-pf-stream/main/assets/screenshot-1.png)
-
-`FORM_2` 纯过程：4 个过程单元。
-
-![FORM_2 纯过程](https://raw.githubusercontent.com/Weilv-D/dsh-pf-stream/main/assets/screenshot-2.png)
-
-`FORM_3` 单焦点：`roi_hint` 局部放大检视。
-
-![FORM_3 单焦点 RoI 放大](https://raw.githubusercontent.com/Weilv-D/dsh-pf-stream/main/assets/screenshot-3.png)
+单元间双色隔离线阻断相邻边缘特征串扰；`renderVisualId` 开启时单元左上角渲染超像素反色角标。
 
 ## 配置
 
 | 配置项 | 默认 | 说明 |
 | --- | --- | --- |
 | `renderVisualId` | `true` | 单元左上角超像素反色角标 |
-| `maxPacketsPerCall` | `64` | 单次调用返回包数上限 |
-| `maxFramesPerCall` | `128` | 确定性抽帧单次目标帧数上限（`frame_count` 受此钳制） |
+| `maxPacketsPerCall` | `64` | 单次调用画布包数上限 |
+| `maxFramesPerCall` | `128` | 确定性抽帧单次目标帧数上限 |
 | `maxImagesPerCall` | `20` | 单次调用回传图像上限（宿主单条消息图像上限 20） |
-| `maxTokensBudgetPerCall` | `65536` | 单次调用视觉 token 预算 |
-| `maxRequestBytes` | `56 MiB` | 请求字节软水位（Base64 后口径） |
-| `maxColdRefs` | `4` | 冷区引用上限 |
-| `defaultStreamWindowMs` | `10000` | `pts_window` 缺省时窗口长度（毫秒） |
-| `streamWorkMaxEdge` | `2048` | 流式解码工作分辨率长边上限（定点检视恒全分辨率） |
+| `maxTokensBudgetPerCall` | `65536` | 单次调用视觉 token 预算上限 |
+| `maxRequestBytes` | `56 MiB` | 请求字节软水位（含 Base64 膨胀与协议结构预留） |
+| `maxColdRefs` | `4` | 冷区引用数量上限 |
+| `telemetryEnabled` | `true` | 遥测字段开关 |
+| `ffmpegPath` | 自动探测 | ffmpeg 可执行文件路径 |
+| `ffprobePath` | 自动探测 | ffprobe 可执行文件路径 |
+| `tempDir` | 系统临时目录 | 临时文件目录 |
+| `contentHashFallback` | `false` | 宿主重编码画布时改用规范化像素内容哈希做载体比对 |
+| `defaultStreamWindowMs` | `10000` | `pts_window` 缺省时的流式窗口长度（毫秒） |
+| `streamWorkMaxEdge` | `2048` | 流式解码工作分辨率长边上限；确定性检视恒全分辨率 |
 | `epochCompactionWindow` | `6` | 热转冷批量收敛窗口（包数） |
+| `meteringProfile.maxTokensPerImage` | `1024` | 单图视觉 token 上限 |
+| `meteringProfile.maxImagesPerRequest` | `600` | 单次请求图像张数上限 |
 | `meteringProfile.imageCountTiersEnabled` | `false` | ≥15 图单边 4096px 规则门控 |
+
+`meteringProfile.superpixelPx` 固定为 `42`，`rounding` 固定为 `ceil`，`legacyModes` 为 legacy 计量口径枚举位，均无需配置。
+
+## 错误码
+
+| 前缀 | 含义 |
+| --- | --- |
+| `PFSTREAM_ARGS_*` | 参数校验失败（`VIDEO_PATH` / `ACTION` / `MODE` / `FOCUS` / `WINDOW` / `TIMESTAMPS` / `INTERVAL` / `FRAME_COUNT` / `PTS`） |
+| `PFSTREAM_PROBE_NOT_FOUND` | 视频路径不存在或不是常规文件 |
+| `PFSTREAM_PROBE_NO_VIDEO` | 容器内不存在视频流 |
+| `PFSTREAM_PROBE_FAILED` | 媒体探测失败（含容器损坏） |
+| `PFSTREAM_SPAWN_FAILED` | ffmpeg / ffprobe 进程无法启动 |
+| `PFSTREAM_EXEC_NONZERO` | 子进程非零退出（附 stderr 尾部） |
+| `PFSTREAM_EXEC_ABORT` | 调用方取消 |
+| `PFSTREAM_EXEC_TIMEOUT` | 子进程执行超时 |
+| `PFSTREAM_DECODE_EMPTY` | 指定时间点无可解码帧（含末尾避让后的回退穷尽） |
+| `PFSTREAM_DECODE_STALL` | 解码连续 30 秒无帧推进，已终止 |
+| `PFSTREAM_UNIFORM_PARAMS_MISSING` | `uniform` 缺少 `interval_ms` 与 `frame_count` |
+| `PFSTREAM_CANVAS_EDGE_OVER_LIMIT` | 画布单边超出像素上限 |
+| `PFSTREAM_CANVAS_TOKEN_OVER_LIMIT` | 画布计费超出单图 token 上限 |
+
+## 交给智能体的提示词
+
+把下面的提示词交给智能体，即可让它规范使用本工具：
+
+```text
+观看本地视频时，使用 dsh-pf-stream 工具，按以下规则操作：
+
+1. 第一次看一个视频，先调用 probe，获取时长、分辨率与帧率。
+2. 分析连续内容或事件演变时，用 pf_stream。问文字或物体细节，传 focus=detail；
+   问动作过程或镜头运动，传 focus=motion。要更多过程帧传 mode=dense，更少传 mode=sparse。
+3. 流式结果只含低分辨率过程单元与关键定格。回答文字、数字、小目标问题前，
+   必须用 action=timestamps 加 roi_hint 对目标时间点放大复核。
+4. 只关心某一段时，传 pts_window（毫秒）。需要等间隔概览时，用 action=uniform
+   配 interval_ms 或 frame_count。
+5. 用 max_packets 与 max_tokens_budget 控制单次返回量。长视频靠游标续窗分段观看：
+   继续追问即可，工具从上次位置继续。
+6. 引用画面证据时，给出画布包号、单元编号与时间戳，与返回的时序提示行对应。
+```
 
 ## 测试
 
 ```bash
-pnpm test        # boundary（纯逻辑）+ e2e（fixture 驱动），20 项边界用例
-pnpm run build   # TypeScript 编译
-pnpm verify:host # 宿主契约自检（Schema 形状/关键字子集/依赖边界）
+pnpm build        # TypeScript 编译
+pnpm test         # 单元 + 边界 + 端到端（fixture 驱动，case01–case20）
+pnpm verify:host  # 宿主契约自检（Schema 形态、关键字子集、依赖边界）
+pnpm check:package # 包内容与 files 白名单一致性
 ```
 
 ## 发布
