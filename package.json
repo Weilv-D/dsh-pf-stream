@@ -7,6 +7,10 @@
     "type": "git",
     "url": "https://github.com/Weilv-D/dsh-pf-stream"
   },
+  "homepage": "https://github.com/Weilv-D/dsh-pf-stream#readme",
+  "bugs": {
+    "url": "https://github.com/Weilv-D/dsh-pf-stream/issues"
+  },
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "exports": {

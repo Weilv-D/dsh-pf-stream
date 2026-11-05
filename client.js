@@ -23,6 +23,7 @@ window.__ModuleLoader__.load({
       panelSubtitle:
         '以下设置用于启用语音识别与转写。未配置时不影响视频播放，但不会生成转写文本；完成配置后，可对含有效音轨的视频进行转写。',
       refresh: '刷新',
+      github: '在 GitHub 上查看源码',
       checking: '正在读取状态…',
       ffmpeg: '视频解码',
       ffmpegOk: '已就绪',
@@ -96,6 +97,7 @@ window.__ModuleLoader__.load({
       panelSubtitle:
         'These settings enable speech recognition and transcription. Without them, video playback is unaffected, but no transcript is generated. Once configured, videos with a usable audio track can be transcribed.',
       refresh: 'Refresh',
+      github: 'View source on GitHub',
       checking: 'Reading status…',
       ffmpeg: 'Video decoding',
       ffmpegOk: 'Ready',
@@ -297,6 +299,21 @@ window.__ModuleLoader__.load({
         cursor: 'pointer',
         lineHeight: 1.2,
         whiteSpace: 'nowrap',
+      },
+      iconButton: {
+        appearance: 'none',
+        border: '.5px solid ' + PALETTE.hairline,
+        background: PALETTE.glassStrong,
+        color: PALETTE.sub,
+        borderRadius: 9,
+        width: 30,
+        height: 30,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        textDecoration: 'none',
+        flex: 'none',
       },
       primary: {
         appearance: 'none',
@@ -723,6 +740,24 @@ window.__ModuleLoader__.load({
           h('h3', { style: styles.title }, t('panelTitle')),
           h('span', { style: styles.badge }, ready ? t('badgeReady') + ' · ' + activeLabel : t('badgePending')),
           h('span', { style: { flex: '1 1 auto' } }),
+          h(
+            'a',
+            {
+              href: 'https://github.com/Weilv-D/dsh-pf-stream',
+              target: '_blank',
+              rel: 'noreferrer',
+              title: t('github'),
+              'aria-label': t('github'),
+              style: styles.iconButton,
+            },
+            h(
+              'svg',
+              { viewBox: '0 0 16 16', width: 16, height: 16, fill: 'currentColor', 'aria-hidden': 'true' },
+              h('path', {
+                d: 'M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z',
+              }),
+            ),
+          ),
           h(
             'button',
             { type: 'button', style: styles.button, onClick: function () { void state.reload(); } },
