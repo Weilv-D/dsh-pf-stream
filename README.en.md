@@ -2,68 +2,143 @@
 
 [中文](https://github.com/Weilv-D/dsh-pf-stream/blob/main/README.md) | **English**
 
-Let the agent understand a video: adaptive frame sampling, plus the spoken words.
+Let the agent watch videos: adaptive sampling, plus the spoken lines.
 
-## For users
+## What it does
 
-### What it does
+- **See**: motion is recorded as it happens; the moment it settles, detail is captured. Any timestamp can be inspected at full resolution.
+- **Hear**: subtitles are used when present; otherwise a transcription engine produces the speech and mounts it on the matching frames.
+- **Optional setup**: video works without transcription; with it, videos that only have a voice track also work.
 
-- **Sees**: records motion as process frames, freezes settles as detail frames, and re-inspects any timestamp at full resolution.
-- **Hears**: uses subtitles when present. Otherwise it transcribes speech and mounts each line onto the matching packet.
-- **Configures on demand**: video processing works without transcription. Transcription adds speech text for videos with an audio track.
+## Install
 
-### Install
+### 1. Install ffmpeg
 
-1. Check ffmpeg and ffprobe: run `ffmpeg -version`.
-2. Find **Video understanding** (package `dsh-pf-stream`) on the DSH plugin page. Install and enable it.
+The plugin decodes video with ffmpeg. Check that it runs:
 
-A setup card appears on the plugin detail page after the first enable.
+```bash
+ffmpeg -version
+ffprobe -version
+```
 
-Or hand this to the agent:
+Both must print output. If not:
+
+| OS | Command |
+| --- | --- |
+| Windows | `winget install Gyan.FFmpeg` |
+| macOS | `brew install ffmpeg` |
+| Ubuntu / Debian | `sudo apt install ffmpeg` |
+
+Open a new terminal and check again. To keep it out of PATH, set `ffmpegPath` and `ffprobePath` in the plugin config.
+
+### 2. Install the plugin in DSH
+
+1. Open DSH and click **Plugins** in the left sidebar.
+2. Find **Video understanding** (package `dsh-pf-stream`).
+3. Open its detail page and switch it on (top right).
+4. On first enable, a setup card appears on the detail page.
+
+If it is not listed, use the install entry on the Plugins page to install `dsh-pf-stream` from npm, then return here.
+
+You can also hand the install to the agent:
 
 ```text
 Install the DSH plugin dsh-pf-stream:
-1. Install the latest version from npm with the plugin manager. Only an applied result counts.
-2. Check ffmpeg and ffprobe. Install them when missing (Windows: winget install Gyan.FFmpeg; macOS: brew install ffmpeg; Linux: sudo apt install ffmpeg).
-3. Call probe on a local video. A returned duration and resolution mean success.
-4. Report the plugin version, the ffmpeg location, and the result.
+1. Install the latest version from npm with the plugin manager; success means result applied;
+2. Check ffmpeg and ffprobe; install them if missing (Windows: winget install Gyan.FFmpeg / macOS: brew install ffmpeg / Linux: sudo apt install ffmpeg);
+3. Call probe on a local video; duration and resolution in the result means success;
+4. Report the plugin version, ffmpeg location, and check results.
 ```
 
-### First run: configure transcription
+## First run: configure transcription
 
-Open **Settings → Plugins → Video understanding**. Pick one path:
+The transcription engine decides whether videos without subtitles get speech text. Without it, video still works; only the transcript is missing.
+
+To open the settings: **Plugins in the left sidebar → Video understanding → the panel below the description**. Use the same path later to change settings.
+
+Three cards at the top report video decode (ffmpeg), local transcription, and cloud transcription. Pick one path:
 
 | Path | Best for | What to do |
 | --- | --- | --- |
-| Local transcription (recommended) | Free, offline, no API key | Click "Download local model" (~190 MB), then "Test transcription" |
-| Cloud transcription | You have a key, or the machine is slow | Pick OpenAI / Groq / a custom compatible endpoint, paste the key, save, then test |
+| Local (recommended) | Free, offline, no API key | Click "Download local model" (~190 MB), then "Test transcription" |
+| Cloud | You have a key, or the machine is slow | Pick OpenAI / Groq / a custom compatible endpoint, paste the key, save, then test |
 | Skip for now | Videos have subtitles | Use it as is; speech-only videos get no transcript |
 
-Three status cards report ffmpeg, local, and cloud. A successful "Test transcription" proves the selected path works.
+Local model steps:
 
-The default policy is `auto`: use a cloud key when present, otherwise use the local engine.
+1. Click "Download local model". The progress bar shows bytes received; cancel at any time.
+2. Clicking again after an interruption resumes the download.
+3. When done, the card reads "Ready · whisper.cpp".
+4. Click "Test transcription". "Local engine available" means it works.
 
-### Use it
+Cloud key steps:
 
-Ask the agent:
+1. Choose a provider under "Cloud transcription key".
+2. Paste the API key and click "Save". After saving, only "Configured" is shown; the key is never echoed back.
+3. Click "Test transcription" to verify the key and network.
+
+The default policy is `auto`: use a cloud key when configured, otherwise the local engine. Under "Advanced" you can switch to local only, cloud only, or off.
+
+One-click install currently supports Windows x64. On other systems, install whisper.cpp and set `audio.asr.local.binPath` in the config file, or use cloud transcription.
+
+## Use it
+
+Give the agent a video path and ask:
 
 - "What happens in this video?"
-- "What text is shown at 12.9 seconds?"
-- "Sample one frame every 5 seconds and describe the change."
+- "What does the text at 12.9 seconds say?"
+- "Take one frame every 5 seconds and describe how it changes."
 - "Transcribe this interview with timestamps."
 
-Sample output (excerpt):
+Example output (excerpt):
 
 ```text
 [Packet #42 | Anchor: #105 | #101(P, 12.1s, Left-Top) → #105(F, 13.4s, Center)]
-Audio @Packet #42: [12.1s-12.9s] "we spent three years on this" | [13.0s-13.4s] "and today we can finally talk"
+Audio @Packet #42: [12.1s-12.9s] "we prepared this for three years" | [13.0s-13.4s] "today we can finally say it"
 ```
 
-The text block is structured metadata. Image blocks hold one canvas per packet. The audio part reports `status`, source, and per-line timing.
+The text block is structured metadata: each canvas packet reports time, form, anchor, and unit positions; the audio part reports status, source, and per-line timings. The image block is one canvas per packet.
 
-### Troubleshooting
+Four ways to look, by question:
 
-| Symptom | Where to look |
+| Goal | Ask |
+| --- | --- |
+| Overview first | "Look at this video" — streaming sampling; motion as process, settle as detail |
+| One exact moment | "What is written at 12.9s" — deterministic high-resolution frame |
+| Even coverage | "One frame every 5 seconds" — uniform sampling |
+| A region | "Zoom into the bottom right" — crop by area, then look |
+
+## Design
+
+### Dual-scale streaming perception
+
+Video is not sampled at a fixed rate. While the picture moves, low-resolution process units (P) record change; when it settles, high-resolution freeze units (F) keep detail. A single canvas packet carries both process and result, so the model does not need to re-watch a clip to recover one detail.
+
+The sampling cadence follows the picture: fast change lowers density to avoid duplicates; slow change waits for a settle before freezing. Long static stretches keep a heartbeat instead of repeating images.
+
+### Canvas packing and metering
+
+A frame is divided into 42 px superpixel-aligned units. P or F units are taken as needed and packed into one canvas. One call can carry several packets; each packet holds only the units that are new, and older packets collapse into reference hashes instead of resending images. Metering follows the canvas grid (`r × (c + 1) + 2`).
+
+### Deterministic inspection
+
+Besides streaming, three paths are deterministic: `probe` reads metadata only; `timestamps` returns exact frames in milliseconds; `uniform` samples at a fixed interval; `roi_hint` crops a region. These do not depend on motion detection, so results are reproducible and suited to reading text, numbers, and small objects.
+
+### Three sources for speech
+
+1. **Subtitles**: a sidecar `.srt` / `.vtt` with the same name first, then embedded soft subtitles.
+2. **Acoustic check**: without subtitles, silence detection and a speech-ratio estimate run first; an all-silent video skips transcription.
+3. **Transcription**: local whisper.cpp, or OpenAI / Groq / a custom compatible endpoint. Segments are mounted on packets by PTS and stitched across block boundaries with a ±300 ms tolerance.
+
+The default is "picture first, speech later": when the soft deadline (`graceMs`, 8 s by default) passes, the visual result returns and transcription continues in the background; the next call on the same video hits the disk cache.
+
+### Old regions
+
+Canvas packets outside the window collapse into references (anchor hash, time, and transcript text) instead of resending images. A timestamp call brings the detail back when needed.
+
+## Troubleshooting
+
+| Symptom | Read |
 | --- | --- |
 | ffmpeg not found | [ffmpeg](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/排障.md#找不到-ffmpeg) |
 | Speech but no transcript | [No transcript](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/排障.md#有声音但没有台词) |
@@ -71,32 +146,14 @@ The text block is structured metadata. Image blocks hold one canvas per packet. 
 | Transcription is slow or times out | [Slow transcription](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/排障.md#转写很慢或超时) |
 | Settings page is read-only | [Read-only config](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/排障.md#设置页只读) |
 
-The troubleshooting guide is Chinese-only. UI messages are localized.
-
-### User documentation
+## Docs
 
 - [Usage Guide](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/usage-guide.md) (English)
 - [使用指南](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/使用指南.md) (Chinese)
 - [排障](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/排障.md) (Chinese)
+- [开发者指南](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/开发者指南.md) (Chinese): architecture, host contracts, tests, release
 
-## For developers
-
-### Components
-
-- Host half: tool `dsh-pf-stream` with `probe`, `pf_stream`, `timestamps`, and `uniform`; audio sidecar; local engine installer; settings API.
-- Client half: `client.js` registers `plugins.bundle.config` and `plugins.bundle.activation` on the plugin detail page.
-
-### Output and host contracts
-
-Each canvas packet carries `packet_id`, form, trigger path, unit timeline, and anchor and strip hashes. Image blocks are canvas PNGs.
-
-Tool parameters use a standard JSON Schema root object. Return values must be lossless JSON. One message carries at most 20 attachment images. The only runtime dependency is `pngjs`.
-
-### Configuration and keys
-
-`engine=auto` is the default. Configuration is written through `ctx.configEditor.edit()`, which preserves untouched fields. Keys live in `ctx.credentials`; the config file holds a reference only.
-
-### Build and test
+## Development
 
 ```bash
 pnpm build
@@ -105,10 +162,9 @@ pnpm verify:host
 pnpm check:package
 ```
 
-### Developer documentation
+The host half provides the `dsh-pf-stream` tool (`probe` / `pf_stream` / `timestamps` / `uniform`), the audio sidecar, the local engine installer, and the settings API. The client half is `client.js`, which registers the config panel and the setup card on the plugin detail page. The only runtime dependency is `pngjs`.
 
-- [开发者指南](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/开发者指南.md) (Chinese): architecture, host contracts, tests, release
-- [Usage Guide](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/usage-guide.md) (English)
+Configuration is written through `ctx.configEditor.edit()`, which keeps fields the user did not touch; keys live in `ctx.credentials`, and the config file only holds a reference.
 
 ## License
 

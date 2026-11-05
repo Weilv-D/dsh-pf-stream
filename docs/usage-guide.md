@@ -125,7 +125,7 @@ Audio @Packet #42: [12.1s-12.9s] "we spent three years on this" | [13.0s-13.4s] 
 
 ## Settings page
 
-**Settings → Plugins → Video understanding** has three parts:
+**Plugins in the left sidebar → Video understanding → the panel below the description** has three parts:
 
 1. **Status cards**: ffmpeg, local engine, cloud key — each with an actionable verdict.
 2. **Two setup paths**: one-click local model download (progress and cancel), or a cloud key (presets plus a custom compatible endpoint).
