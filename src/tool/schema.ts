@@ -102,8 +102,15 @@ export const TOOL_DESCRIPTION =
   'Look at a local video: adaptive dual-scale streaming perception (low-token P units during motion, ' +
   'high-detail F units at settle) plus deterministic inspection (probe metadata, exact-timestamp frames, ' +
   'uniform slicing, RoI zoom). All canvases are 42px-grid aligned and billed as r*(c+1)+2 vision tokens. ' +
-  'Use action="probe" for metadata, action="timestamps"/"uniform" for deterministic inspection, ' +
-  'default action="pf_stream" for continuous event viewing.';
+  'Usage: call action="probe" first on a new video. Default action="pf_stream" for continuous content ' +
+  '(focus="detail" for text or object details, focus="motion" for actions or camera movement, ' +
+  'mode="dense"/"sparse" for more or fewer process frames). ' +
+  'Streaming canvases contain low-resolution process units and key freeze frames: before answering ' +
+  'questions about text, numbers, or small objects, verify the target time with action="timestamps" ' +
+  'and roi_hint. Pass pts_window (ms) to inspect one segment; use action="uniform" with interval_ms ' +
+  'or frame_count for an even overview. Repeat streaming calls resume from the last position, so a ' +
+  'long video can be viewed in segments. Cite packet IDs, unit IDs, and timestamps from the returned ' +
+  'hint lines as evidence.';
 
 /** 输出 schema：随各里程碑交付逐步收紧，当前为对象根。 */
 export const toolOutputSchema = {
