@@ -79,6 +79,8 @@ ffprobe -version
 
 进入配置页：**左侧栏「插件」→ 点「视频理解」→ 详情页描述下方的面板**。以后要改设置，走同一条路。
 
+<p><img src="https://raw.githubusercontent.com/Weilv-D/dsh-pf-stream/main/docs/assets/panel.png" width="720" alt="插件详情页的转写设置面板：视频解码、本地转写与云端转写三张状态卡"></p>
+
 面板顶部有三张状态卡：视频解码（ffmpeg）、本地转写、云端转写。按需要选一条路线：
 
 | 路线 | 适合 | 操作 |
