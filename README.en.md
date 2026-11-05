@@ -2,34 +2,30 @@
 
 [中文](README.md) | **English**
 
-A DeepSeek Harness (DSH) plugin that lets the agent watch local videos. Sampling follows the picture: motion gets compact process frames, settle points get high-detail freeze frames. Exact timestamps support zoom-in inspection.
+A video plugin for DeepSeek Harness (DSH). The agent uses it to watch local videos. During motion, the plugin records the process. At settle, it captures detail frames. Exact timestamps support full-resolution inspection.
 
-## Installation
+## Install
 
-### Option 1: Ask your agent
+Prerequisite: ffmpeg and ffprobe must be available.
 
-Tell your agent:
+### Option 1: delegate to the agent
 
-> Install the DSH plugin dsh-pf-stream from npm, latest version, and make sure ffmpeg is available.
-
-For full control, hand this prompt to your agent:
+Give this prompt to the agent:
 
 ```text
 Install the DSH plugin dsh-pf-stream. Follow these steps:
-
-1. Install the latest dsh-pf-stream package from npm through the plugin manager.
-   The install result must be "applied".
-2. Check that ffmpeg and ffprobe are available. Install them if missing:
-   winget install Gyan.FFmpeg on Windows, brew install ffmpeg on macOS,
-   sudo apt install ffmpeg on Linux.
-3. Run one probe call on a local video. Duration and resolution in the result
-   mean success.
-4. Report: plugin version, ffmpeg and ffprobe locations, verification result.
+1. Install the latest dsh-pf-stream from npm with the plugin manager. The result must be "applied".
+2. Check ffmpeg and ffprobe. If they are missing, install them:
+   Windows: winget install Gyan.FFmpeg;
+   macOS: brew install ffmpeg;
+   Linux: sudo apt install ffmpeg.
+3. Call probe on a local video. A returned duration and resolution means success.
+4. Report the plugin version, the ffmpeg location, and the check result.
 ```
 
-### Option 2: Manual install
+### Option 2: manual install
 
-1. Install ffmpeg and ffprobe. See the [ffmpeg website](https://ffmpeg.org/download.html), or use a package manager:
+1. Install ffmpeg and ffprobe:
 
    ```bash
    winget install Gyan.FFmpeg   # Windows
@@ -37,32 +33,26 @@ Install the DSH plugin dsh-pf-stream. Follow these steps:
    sudo apt install ffmpeg      # Debian / Ubuntu
    ```
 
-   When the executables are not on PATH, set the plugin config `ffmpegPath` and `ffprobePath`.
-
-2. Install and mount the plugin package in the host workspace:
-
-   ```bash
-   pnpm add dsh-pf-stream
-   ```
-
-   Write the mount entry into the host config as declared in the package's `cordis.patch.yml`.
-
-3. Verify: open a new DSH session; the tool list shows `dsh-pf-stream`. Ask your agent to "look at <video path> with dsh-pf-stream"; a scene description plus canvas images means success.
+2. If the executables are outside PATH, set `ffmpegPath` and `ffprobePath` in the plugin config.
+3. Add the package to the host: `pnpm add dsh-pf-stream`.
+4. Mount the plugin as declared in `cordis.patch.yml` inside the package.
+5. Verify: start a new DSH session. The tool `dsh-pf-stream` appears in the tool list.
 
 ## Usage
 
-Ask your agent in plain language:
+Ask the agent directly:
 
 - "What happens in this video?"
-- "What does the text at 12.9 s say?"
-- "Sample one frame every 5 seconds and describe the changes."
+- "What text is shown at 12.9 seconds?"
+- "Sample one frame every 5 seconds and describe the change."
 
-Parameters, return content, and session behavior are covered in the [usage guide](docs/usage-guide.md).
+For parameters and return content, see the [usage guide](docs/usage-guide.md).
 
 ## Documentation
 
-- [Usage guide](docs/usage-guide.md): action routing, parameters, call examples, session behavior, return content, canvas billing, configuration, error codes.
-- [Release process](docs/发布规范.md): version policy and release workflow (Chinese).
+- [使用指南](docs/使用指南.md) (Chinese)
+- [Usage Guide](docs/usage-guide.md) (English)
+- [发布规范](docs/发布规范.md) (release process)
 
 ## License
 
