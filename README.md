@@ -1,18 +1,41 @@
-# dsh-pf-stream
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Weilv-D/dsh-pf-stream/main/icon.svg" width="72" height="72" alt="视频理解">
+</p>
 
-**中文** | [English](https://github.com/Weilv-D/dsh-pf-stream/blob/main/README.en.md)
+<h1 align="center">视频理解</h1>
 
-让智能体看懂视频：动态抽帧，加上台词。
+<p align="center">让智能体看懂视频：画面、动作与台词，按时间对齐。</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/dsh-pf-stream"><img src="https://img.shields.io/npm/v/dsh-pf-stream?color=2f6feb" alt="npm 版本"></a>
+  <img src="https://img.shields.io/badge/license-Apache--2.0-2ea44f" alt="许可证">
+  <img src="https://img.shields.io/badge/DSH-plugin-6e56cf" alt="DSH 插件">
+</p>
+
+<p align="center"><b>中文</b> · <a href="README.en.md">English</a></p>
+
+---
+
+## 30 秒上手
+
+| 步骤 | 做什么 |
+| --- | --- |
+| 1 | 安装 ffmpeg（[命令见下](#1-安装-ffmpeg)），确认 `ffmpeg -version` 有输出 |
+| 2 | 左侧栏「插件」→ 点「视频理解」→ 打开右上角开关 |
+| 3 | 详情页点「下载本地模型」，约 190 MB；完成后点「测试转写」 |
+| 4 | 在对话里给视频路径，直接提问 |
+
+不配置转写也能看画面。只有「没有字幕、又需要台词」的视频，才需要第 3 步。
 
 ## 能做什么
 
 - **看画面**：画面运动时记录过程，停稳时定格细节；指定时间点可以高清复核。
 - **听声音**：有字幕就用字幕；没有字幕时，配置转写引擎后生成台词，并按时间挂到对应画面。
-- **按需配置**：不配置转写也能处理画面；配置后可以处理带音轨的视频。
+- **按需配置**：默认不转写也能处理画面；配置后可以处理带音轨的视频。
 
 ## 安装
 
-### 第一步：安装 ffmpeg
+### 1. 安装 ffmpeg
 
 插件用 ffmpeg 解码视频。先确认它能运行：
 
@@ -29,9 +52,9 @@ ffprobe -version
 | macOS | `brew install ffmpeg` |
 | Ubuntu / Debian | `sudo apt install ffmpeg` |
 
-装完新开一个终端再验证。不想放进 PATH，可以在插件配置里写 `ffmpegPath` 与 `ffprobePath` 的绝对路径。
+> 装完新开一个终端再验证。不想放进 PATH，可以在插件配置里写 `ffmpegPath` 与 `ffprobePath` 的绝对路径。
 
-### 第二步：在 DSH 里安装插件
+### 2. 在 DSH 里安装插件
 
 1. 打开 DSH，点左侧栏的「插件」。
 2. 在列表里找「视频理解」（包名 `dsh-pf-stream`）。
@@ -64,22 +87,22 @@ ffprobe -version
 | 云端转写 | 已有 API Key，或机器性能较弱 | 选 OpenAI / Groq / 自定义兼容端点，填 Key，保存后点「测试转写」 |
 | 暂不配置 | 视频都有字幕 | 直接使用；无字幕的语音视频不会生成转写文本 |
 
-本地模型的下载步骤：
+### 本地模型
 
 1. 点「下载本地模型」。进度条显示已下载大小，可随时取消。
 2. 下载中断后再次点击会续传，不用从头开始。
 3. 完成后状态卡显示「已就绪 · whisper.cpp」。
 4. 点「测试转写」。返回「本地引擎可用」即配置成功。
 
-云端密钥的保存步骤：
+一键安装当前支持 Windows x64。其他系统请先安装 whisper.cpp，在配置文件 `audio.asr.local.binPath` 填写可执行文件路径，或改用云端转写。
+
+### 云端密钥
 
 1. 在「云端转写密钥」里选服务商。
 2. 粘贴 API Key，点「保存」。保存后只显示「已配置」，不再回显密钥。
 3. 点「测试转写」验证密钥与网络。
 
-默认策略是 `auto`：云端密钥、端点、模型都齐时用云端（更快，按量计费）；否则用本地引擎。面板标题旁会显示当前实际使用的引擎，如「转写可用 · 云端」。可以在「高级」里改成仅本地、仅云端或不转写。
-
-一键安装当前支持 Windows x64。其他系统请先安装 whisper.cpp，在配置文件 `audio.asr.local.binPath` 填写可执行文件路径，或改用云端转写。
+> **自动策略**：云端密钥、端点、模型都齐时用云端（更快，按量计费）；否则用本地引擎。面板标题旁会显示当前实际使用的引擎，如「转写可用 · 云端」。可以在「高级」里改成仅本地、仅云端或不转写。
 
 ## 开始使用
 
@@ -148,10 +171,12 @@ Audio @Packet #42: [12.1s-12.9s] "这件事我们准备了三年" | [13.0s-13.4s
 
 ## 文档
 
-- [使用指南](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/使用指南.md)：用法、参数、返回内容、计费、全部配置项
-- [排障](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/排障.md)：按现象查原因
-- [开发者指南](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/开发者指南.md)：架构、宿主契约、测试与发布
-- [Usage Guide](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/usage-guide.md)（English）
+| 文档 | 内容 |
+| --- | --- |
+| [使用指南](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/使用指南.md) | 用法、参数、返回内容、计费、全部配置项 |
+| [排障](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/排障.md) | 按现象查原因 |
+| [开发者指南](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/开发者指南.md) | 架构、宿主契约、测试与发布 |
+| [Usage Guide](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/usage-guide.md) | 英文使用指南 |
 
 ## 本地开发
 

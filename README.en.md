@@ -1,8 +1,31 @@
-# dsh-pf-stream
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Weilv-D/dsh-pf-stream/main/icon.svg" width="72" height="72" alt="Video understanding">
+</p>
 
-[中文](https://github.com/Weilv-D/dsh-pf-stream/blob/main/README.md) | **English**
+<h1 align="center">Video understanding</h1>
 
-Let the agent watch videos: adaptive sampling, plus the spoken lines.
+<p align="center">Frames, motion and speech from a video, aligned on a timeline for the agent.</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/dsh-pf-stream"><img src="https://img.shields.io/npm/v/dsh-pf-stream?color=2f6feb" alt="npm version"></a>
+  <img src="https://img.shields.io/badge/license-Apache--2.0-2ea44f" alt="license">
+  <img src="https://img.shields.io/badge/DSH-plugin-6e56cf" alt="DSH plugin">
+</p>
+
+<p align="center"><a href="README.md">中文</a> · <b>English</b></p>
+
+---
+
+## Quick start
+
+| Step | Do |
+| --- | --- |
+| 1 | Install ffmpeg ([commands below](#1-install-ffmpeg)); `ffmpeg -version` must print output |
+| 2 | Left sidebar **Plugins** → **Video understanding** → switch it on |
+| 3 | Click **Download local model** (~190 MB), then **Test transcription** |
+| 4 | Give the agent a video path and ask |
+
+Video works without transcription. Only videos that have no subtitles and need speech text require step 3.
 
 ## What it does
 
@@ -29,7 +52,7 @@ Both must print output. If not:
 | macOS | `brew install ffmpeg` |
 | Ubuntu / Debian | `sudo apt install ffmpeg` |
 
-Open a new terminal and check again. To keep it out of PATH, set `ffmpegPath` and `ffprobePath` in the plugin config.
+> Open a new terminal and check again. To keep it out of PATH, set `ffmpegPath` and `ffprobePath` in the plugin config.
 
 ### 2. Install the plugin in DSH
 
@@ -64,22 +87,22 @@ Three cards at the top report video decode (ffmpeg), local transcription, and cl
 | Cloud | You have a key, or the machine is slow | Pick OpenAI / Groq / a custom compatible endpoint, paste the key, save, then test |
 | Skip for now | Videos have subtitles | Use it as is; speech-only videos get no transcript |
 
-Local model steps:
+### Local model
 
 1. Click "Download local model". The progress bar shows bytes received; cancel at any time.
 2. Clicking again after an interruption resumes the download.
 3. When done, the card reads "Ready · whisper.cpp".
 4. Click "Test transcription". "Local engine available" means it works.
 
-Cloud key steps:
+One-click install currently supports Windows x64. On other systems, install whisper.cpp and set `audio.asr.local.binPath` in the config file, or use cloud transcription.
+
+### Cloud key
 
 1. Choose a provider under "Cloud transcription key".
 2. Paste the API key and click "Save". After saving, only "Configured" is shown; the key is never echoed back.
 3. Click "Test transcription" to verify the key and network.
 
-The default policy is `auto`: use a cloud key when configured, otherwise the local engine. Under "Advanced" you can switch to local only, cloud only, or off.
-
-One-click install currently supports Windows x64. On other systems, install whisper.cpp and set `audio.asr.local.binPath` in the config file, or use cloud transcription.
+> **Auto policy**: cloud is used when key, endpoint and model are all set (faster, billed per use); otherwise the local engine. The badge next to the panel title shows the engine in use, such as "Transcription ready · Cloud". Under "Advanced" you can switch to local only, cloud only, or off.
 
 ## Use it
 
@@ -148,10 +171,12 @@ Canvas packets outside the window collapse into references (anchor hash, time, a
 
 ## Docs
 
-- [Usage Guide](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/usage-guide.md) (English)
-- [使用指南](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/使用指南.md) (Chinese)
-- [排障](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/排障.md) (Chinese)
-- [开发者指南](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/开发者指南.md) (Chinese): architecture, host contracts, tests, release
+| Document | Contents |
+| --- | --- |
+| [Usage Guide](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/usage-guide.md) | Usage, parameters, output, metering, every config key |
+| [使用指南](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/使用指南.md) | Chinese usage guide |
+| [排障](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/排障.md) | Troubleshooting by symptom (Chinese) |
+| [开发者指南](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/开发者指南.md) | Architecture, host contracts, tests, release (Chinese) |
 
 ## Development
 
