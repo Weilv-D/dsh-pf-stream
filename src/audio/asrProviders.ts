@@ -64,11 +64,12 @@ function normalizeBaseUrl(baseUrl: string): string {
 }
 
 /**
- * 转写端点：既接受「origin」也接受「origin/v1」两种填法，
- * 避免用户在设置页把 /v1 填进去后出现 /v1/v1 双段。
+ * 转写端点：接受 origin、origin/v1，以及用户直接粘贴的完整
+ * `/v1/audio/transcriptions`，避免出现重复路径段。
  */
 export function transcriptionUrl(baseUrl: string): string {
   const base = normalizeBaseUrl(baseUrl);
+  if (/\/audio\/transcriptions$/i.test(base)) return base;
   return /\/v1$/i.test(base) ? `${base}/audio/transcriptions` : `${base}/v1/audio/transcriptions`;
 }
 

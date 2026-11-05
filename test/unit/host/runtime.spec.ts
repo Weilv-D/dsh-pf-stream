@@ -87,4 +87,18 @@ describe('配置写入（走 configEditor）', () => {
     expect(result.ok).toBe(false);
     expect(result.message).toContain('no longer available');
   });
+
+  it('保存后当前实例立即读到新值（面板回显不再清空）', async () => {
+    const runtime = makeRuntime({});
+    await runtime.patchConfig({
+      audio: { asr: { preset: 'custom', baseUrl: 'https://api.example.com/v1/audio/transcriptions', model: 'm' } },
+    });
+    const config = runtime.currentConfig() as unknown as {
+      audio: { asr: { preset: string; baseUrl: string; model: string; engine: string } };
+    };
+    expect(config.audio.asr.preset).toBe('custom');
+    expect(config.audio.asr.baseUrl).toBe('https://api.example.com/v1/audio/transcriptions');
+    expect(config.audio.asr.model).toBe('m');
+    expect(config.audio.asr.engine).toBe('auto');
+  });
 });

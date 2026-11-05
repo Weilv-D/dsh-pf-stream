@@ -148,6 +148,12 @@ export async function verifyCloud(settings: AsrSettings, timeoutMs = 20_000): Pr
     if (response.status === 401 || response.status === 403) {
       return { ok: false, kind: 'cloud', latencyMs, text: null, message: '密钥被拒绝（401/403）' };
     }
+    if (response.status === 402) {
+      return { ok: false, kind: 'cloud', latencyMs, text: null, message: '账户余额不足（402）' };
+    }
+    if (response.status === 404) {
+      return { ok: false, kind: 'cloud', latencyMs, text: null, message: '端点不存在（404），检查服务地址' };
+    }
     if (!response.ok) {
       const body = (await response.text().catch(() => '')).slice(0, 200);
       return {

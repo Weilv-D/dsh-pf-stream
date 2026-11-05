@@ -115,6 +115,11 @@ export class HostRuntime {
   private detectionCache: { at: number; value: LocalEngineSnapshot } | null = null;
   private keyCache: { at: number; value: Record<string, string | null> } | null = null;
   private lastFacts: AsrRuntimeFacts | null = null;
+  /**
+   * 本会话内已保存的配置补丁。configEditor 负责持久化，但运行中的插件实例
+   * 不会立刻拿到新配置，所以这里保留一份覆盖层，保证保存后面板与工具立即生效。
+   */
+  private overrides: Record<string, unknown> = {};
   readonly installer: LocalAsrInstaller;
 
   constructor(
@@ -130,7 +135,12 @@ export class HostRuntime {
   }
 
   private config(): PfStreamPluginConfig {
-    return this.getConfig();
+    const base = this.getConfig();
+    if (Object.keys(this.overrides).length === 0) return base;
+    return mergeConfig(
+      base as unknown as Record<string, unknown>,
+      this.overrides,
+    ) as unknown as PfStreamPluginConfig;
   }
 
   /** 供 HTTP 层读取当前配置（只读）。 */
@@ -285,6 +295,8 @@ export class HostRuntime {
     }
     try {
       await editor.edit(entry, (current) => mergeConfig(current, patch));
+      // 持久化已完成；覆盖层让当前运行实例立即读到新值。
+      this.overrides = mergeConfig(this.overrides, patch);
       this.invalidate();
       const next = this.config();
       this.installer.update({ modelId: next.audio.asr.local?.modelId ?? 'small-q5_1' });

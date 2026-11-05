@@ -218,7 +218,12 @@ export function buildToolDefinition(_deps: {
   const bins = resolveBinPaths({ ffmpegPath: config.ffmpegPath, ffprobePath: config.ffprobePath });
   const attachments = resolveAttachments(_deps.ctx);
   const audioSettings = (intent: IntentDirective | undefined): AudioSettings =>
-    resolveAudioSettings(config.audio, intent, process.env, _deps.runtime?.syncFacts());
+    resolveAudioSettings(
+      (_deps.runtime?.currentConfig() ?? config).audio,
+      intent,
+      process.env,
+      _deps.runtime?.syncFacts(),
+    );
   const attachImages: AttachImagesFn = (artifacts) =>
     savePacketImages(attachments, artifacts, config.maxImagesPerCall);
   const probe: ProbeFn = (videoPath, signal) =>
