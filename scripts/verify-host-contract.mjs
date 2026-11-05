@@ -3,11 +3,14 @@
  * 宿主契约静态自检（设计文档 §2.2b 承诺的可执行核对，无需宿主运行时）。
  *
  * 核对项（依据 cordis-plugin-development 与宿主 harness 实证）：
- *  1. 工具 parameters 为 schemastery 值 schema 的「属性名 → 值 schema」映射，
- *     不写成完整 JSON Schema（宿主拒装：parameters.type must be a value schema object）；
- *  2. 值 schema 只使用宿主允许的关键字集合
- *     { type, oneOf, properties, required, additionalProperties, items, enum, const, description }，
- *     数值边界由入口适配器钳制实现，Schema 层出现 minimum/pattern 等会被 apply 期拒装；
+ *  1. 工具 parameters 为标准 JSON Schema 根对象 {type:"object", properties,
+ *     required, additionalProperties}。本插件经 ctx.tools.register() 注册，
+ *     宿主对该路径的 parameters 不做归一化、原样投影给模型（schemaOf()）；
+ *     「属性名 → 值 schema」映射形式只在 defineTool() 路径归一化，register()
+ *     路径使用会令模型端把工具视为无参数。
+ *  2. 值 schema 只使用保守关键字集合
+ *     { type, properties, required, additionalProperties, items, enum, const, description }，
+ *     数值边界由入口适配器钳制实现（src/tool/schema.ts 头注）。
  *  3. package.json：@deepseek-ai/cordis 与 @deepseek-ai/schemastery 声明为
  *     peerDependencies（运行时依赖仅 pngjs——ADR-006 零原生依赖红线）；
  *  4. 依赖闭包无原生模块（排除 optional peer 与 devDependencies）。
@@ -36,15 +39,17 @@ function check(name, ok, detail) {
 const { toolParameters } = await import(pathToFileURL(join(root, 'lib', 'tool', 'schema.js')).href);
 
 check(
-  'toolParameters 为对象（schemastery 属性映射形态，非 {type:"object"} 完整 JSON Schema）',
-  typeof toolParameters === 'object' && toolParameters !== null && toolParameters.type !== 'object',
-  `实际类型 ${typeof toolParameters}`,
+  'toolParameters 为标准 JSON Schema 根对象（{type:"object", properties, required}）',
+  toolParameters?.type === 'object' &&
+    toolParameters.properties !== null &&
+    typeof toolParameters.properties === 'object' &&
+    Array.isArray(toolParameters.required),
+  `实际 type=${toolParameters?.type}`,
 );
 
-// 宿主允许集（宿主 assertSupportedJsonSchema 允许集实证）：
-// 数值边界由入口适配器钳制实现（src/tool/schema.ts 头注），Schema 层不使用。
+// 保守关键字集（数值边界由入口适配器钳制实现，src/tool/schema.ts 头注）：
 const ALLOWED_KEYS = new Set([
-  'type', 'oneOf', 'properties', 'required', 'additionalProperties',
+  'type', 'properties', 'required', 'additionalProperties',
   'items', 'enum', 'const', 'description',
 ]);
 
@@ -69,18 +74,25 @@ function walkSchema(node, path) {
   }
 }
 const beforeFailures = failures.length;
-// 顶层是「属性名 → 值 schema」映射：属性名不是关键字，逐值 schema 内部检查
-for (const [prop, schema] of Object.entries(toolParameters)) {
-  walkSchema(schema, `toolParameters.${prop}`);
+// 根对象自带 type/properties/required/additionalProperties；逐属性值 schema 内部检查
+for (const [prop, schema] of Object.entries(toolParameters.properties)) {
+  walkSchema(schema, `toolParameters.properties.${prop}`);
 }
-check('工具 schema 关键字全部落在宿主允许集', failures.length === beforeFailures);
+check('工具 schema 关键字全部落在允许集', failures.length === beforeFailures);
 
-// 值 schema 必填字段存在
+// 必填字段存在（root schema 形态）
 check(
   'video_path 入参存在且为 string',
-  toolParameters.video_path?.type === 'string',
+  toolParameters.properties.video_path?.type === 'string',
 );
-check('intent 入参存在（object）', toolParameters.intent?.type === 'object');
+check(
+  'video_path 列入 required',
+  Array.isArray(toolParameters.required) && toolParameters.required.includes('video_path'),
+);
+check(
+  'intent 入参存在（object）',
+  toolParameters.properties.intent?.type === 'object',
+);
 
 // ---------------------------------------------------------------------------
 // 3. package.json 依赖形态

@@ -1,10 +1,15 @@
 /**
- * 工具参数与输出 Schema（宿主允许的 JSON Schema 关键字子集内）。
+ * 工具参数与输出 Schema。
  *
- * parameters 采用「属性名 → 值 schema」映射形式（宿主 dsh-tools 契约）。
+ * 本插件经 ctx.tools.register() 注册：宿主对该路径的 parameters 不做归一化，
+ * 原样投影给模型（dsh-tools schemaOf()）。因此 parameters 必须是标准 JSON
+ * Schema 根对象（{type:"object", properties, required}）；「属性名 → 值 schema」
+ * 映射形式只在 defineTool() 路径归一化，register() 路径使用会令模型端把工具
+ * 视为无参数。
+ *
  * 数值边界（pts_window 越界、roi_hint 区间、max_packets/max_tokens_budget 上限）
  * 由入口适配器按规格《五、双层自适应调节与统一参数映射》§1.3 钳制，不在
- * Schema 层声明 minimum/maximum（该关键字不在宿主允许子集内）。
+ * Schema 层声明 minimum/maximum。
  */
 
 export const TOOL_NAME = 'dsh-pf-stream';
@@ -27,6 +32,14 @@ export interface ValueSchema {
   additionalProperties?: boolean;
   items?: ValueSchema;
   description?: string;
+}
+
+/** parameters 根对象：register() 路径要求的标准 JSON Schema 根包装。 */
+export interface ParameterRootSchema {
+  type: 'object';
+  properties: Record<string, ValueSchema>;
+  required: string[];
+  additionalProperties: boolean;
 }
 
 export const intentValueSchema: ValueSchema = {
@@ -72,12 +85,17 @@ export const legacyValueSchemas: Record<string, ValueSchema> = {
   probe_only: { type: 'boolean', description: '仅探测视频元数据（等价 action="probe"）' },
 };
 
-/** 工具 parameters：属性名 → 值 schema 映射。顶层额外声明历史便捷字段
- * （宿主会剥离未声明参数，故必须显式列出才能到达适配器）。 */
-export const toolParameters: Record<string, ValueSchema> = {
-  video_path: { type: 'string', description: '待处理的本地视频文件路径' },
-  intent: intentValueSchema,
-  ...legacyValueSchemas,
+/** 工具 parameters：标准 JSON Schema 根对象（register() 路径原样投影给模型）。
+ * 顶层显式声明历史便捷字段（模型按 properties 生成实参，字段才能到达适配器）。 */
+export const toolParameters: ParameterRootSchema = {
+  type: 'object',
+  properties: {
+    video_path: { type: 'string', description: '待处理的本地视频文件路径' },
+    intent: intentValueSchema,
+    ...legacyValueSchemas,
+  },
+  required: ['video_path'],
+  additionalProperties: false,
 };
 
 export const TOOL_DESCRIPTION =

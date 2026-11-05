@@ -109,8 +109,12 @@ export async function handleToolCall(
   exec: ToolExec | undefined,
   deps: ToolDeps,
 ): Promise<ToolResult> {
-  // 统一入口：probe 后经入口适配器归一化（历史便捷字段 + 枚举校验 + 钳制），
-  // 再按 intent.action 路由（《五》§1 与《七》§1）。
+  // 统一入口：video_path 前置校验（空实参时给出明确错误码，而非 probe 的
+  // 文件未找到）→ probe → 入口适配器归一化（历史便捷字段 + 枚举校验 + 钳制）
+  // → 按 intent.action 路由（《五》§1 与《七》§1）。
+  if (typeof args.video_path !== 'string' || args.video_path.length === 0) {
+    throw new PfStreamError('PFSTREAM_ARGS_VIDEO_PATH', 'video_path 必须为非空字符串');
+  }
   const probeResult = await deps.probe(args.video_path, exec?.signal);
   const { intent } = adaptCallArgs(args as unknown as Record<string, unknown>, {
     lastPtsMs: probeResult.lastPtsMs,
