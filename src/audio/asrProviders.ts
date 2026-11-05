@@ -13,6 +13,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import { parseSrt } from './subtitleExtractor.js';
 import type { AsrSettings, TranscriptSegment } from './types.js';
 
@@ -192,8 +193,16 @@ export async function transcribeLocalCli(
   const audioFile = path.join(dir, 'chunk.mp3');
   try {
     await writeFile(audioFile, input.bytes);
+    // argv 模板：{audio}=音频路径 {out}=输出文件路径 {dir}=音频所在临时目录；
+    // 无 {audio} 令牌时音频路径追加在末尾
+    const rawArgs = settings.args ?? [];
+    const usesAudioToken = rawArgs.includes('{audio}');
+    const outFile = rawArgs.includes('{out}') ? path.join(dir, 'cli-out.txt') : null;
+    const argv = rawArgs.map((a) => (a === '{audio}' ? audioFile : a === '{out}' ? outFile! : a === '{dir}' ? dir : a));
+    if (!usesAudioToken) argv.push(audioFile);
     const stdout = await new Promise<string>((resolve, reject) => {
-      const child = spawn(exe, [audioFile], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+      // PYTHONUTF8：Python 系 CLI 在 GBK 控制台输出中文会抛 UnicodeEncodeError
+      const child = spawn(exe, argv, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, env: { ...process.env, PYTHONUTF8: '1' } });
       let out = '';
       const timer = setTimeout(() => {
         child.kill();
@@ -218,7 +227,25 @@ export async function transcribeLocalCli(
         else reject(new AsrRequestError(`local_cli 退出码 ${code}`, 'ASR_NONZERO'));
       });
     });
-    return parseCliOutput(stdout, input.endMs - input.startMs);
+    // 契约：args 含 {out}/{dir} 令牌时结果按文件产物优先（CLI 的 stdout 可能只有进度杂讯）；
+    // 无令牌的零参 CLI 以 stdout 为主，音频同目录产物兜底
+    const expectsArtifacts = outFile !== null || rawArgs.includes('{dir}');
+    let content = '';
+    const readArtifact = async (): Promise<string> => {
+      const candidates = [outFile, path.join(dir, 'chunk.srt'), path.join(dir, 'chunk.vtt'), path.join(dir, 'chunk.txt'), path.join(dir, 'chunk.json')];
+      for (const c of candidates) {
+        if (c === null) continue;
+        const t = await readFile(c, 'utf8').catch(() => '');
+        if (t.trim().length > 0) return t;
+      }
+      return '';
+    };
+    if (expectsArtifacts) {
+      content = (await readArtifact()) || stdout;
+    } else {
+      content = stdout.trim().length > 0 ? stdout : await readArtifact();
+    }
+    return parseCliOutput(content, input.endMs - input.startMs);
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }

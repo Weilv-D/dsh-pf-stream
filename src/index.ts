@@ -71,6 +71,7 @@ export const Config = Schema.object({
       model: Schema.string().description('模型名或本地 CLI 可执行文件路径（local_cli）'),
       apiKey: Schema.string().description('API key（环境变量 DSH_ASR_API_KEY 优先）'),
       language: Schema.string().description('语言提示（如 zh、en）'),
+      args: Schema.array(Schema.string()).description('local_cli 附加参数（{audio} 音频/{out} 输出文件/{dir} 临时目录 令牌）'),
       timeoutMs: Schema.number().default(8000).description('单请求超时（毫秒）'),
       maxConcurrency: Schema.number().default(2).description('分块并发上限'),
     }),

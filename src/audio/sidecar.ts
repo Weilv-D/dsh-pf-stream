@@ -77,6 +77,7 @@ export function resolveAudioSettings(
           model: config.asr.model?.trim() || null,
           apiKey,
           language: audioIntent?.language ?? config.asr.language?.trim() ?? null,
+          args: config.asr.args && config.asr.args.length > 0 ? config.asr.args : null,
           timeoutMs: config.asr.timeoutMs,
           maxConcurrency: config.asr.maxConcurrency,
         }

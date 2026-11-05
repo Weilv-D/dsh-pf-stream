@@ -135,8 +135,9 @@ Dual-tone separator lines block edge-feature crosstalk between units. With `rend
 | `audio.graceMs` | `8000` | Transcription soft deadline (ms); visual results return first on timeout |
 | `audio.asr.provider` | `none` | Transcription provider (`none` / `openai_verbose` / `openai_basic` / `local_cli`) |
 | `audio.asr.baseUrl` | OpenAI official | Transcription endpoint (OpenAI-compatible protocol) |
-| `audio.asr.model` | `whisper-1` | Transcription model name |
+| `audio.asr.model` | `whisper-1` | Transcription model name; executable path for `local_cli` |
 | `audio.asr.apiKey` | empty | Transcription key; the `DSH_ASR_API_KEY` environment variable takes priority |
+| `audio.asr.args` | empty | Extra arguments for `local_cli`. Tokens: `{audio}` audio path, `{out}` output file, `{dir}` temp directory. Without `{audio}`, the audio path is appended last. With `{out}`/`{dir}`, artifact files are read first and stdout is the fallback |
 | `audio.asr.timeoutMs` | `8000` | Per-chunk transcription timeout (ms) |
 | `audio.asr.maxConcurrency` | `2` | Concurrency for long-audio chunked transcription |
 | `meteringProfile.maxTokensPerImage` | `1024` | Vision token limit per image |
@@ -146,6 +147,20 @@ Dual-tone separator lines block edge-feature crosstalk between units. With `rend
 Executable resolution order (`ffmpeg` and `ffprobe` use the same order): `ffmpegPath`/`ffprobePath` → environment variables `DSH_FFMPEG_PATH`/`FFMPEG_PATH` (exact path or containing directory) → `DSH_FFMPEG_DIR` (a directory holding both executables) → `~/.dsh/tools/ffmpeg/bin` and `~/.dsh/bin` → OS `PATH`.
 
 `meteringProfile.superpixelPx` is fixed at `42`, `rounding` fixed at `ceil`, and `legacyModes` is a legacy-metering enum placeholder; none of them need configuration.
+
+Example `local_cli` configuration (whisper-ctranslate2, CPU mode):
+
+```yaml
+audio:
+  asr:
+    provider: local_cli
+    model: C:/Users/<user>/AppData/Roaming/Python/Python313/Scripts/whisper-ctranslate2.exe
+    args: [--model, small, --language, zh, --task, transcribe, --output_format, srt, --output_dir, "{dir}", --device, cpu, --compute_type, int8]
+    timeoutMs: 300000
+    maxConcurrency: 1
+```
+
+Local transcription is timed per chunk; raise `timeoutMs` and `audio.graceMs` for CPU mode. The CLI writes `chunk.srt` to the temp directory, and the plug-in reads it back automatically.
 
 ## Error codes
 

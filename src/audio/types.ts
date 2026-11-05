@@ -62,6 +62,8 @@ export interface AsrSettings {
   model: string | null;
   apiKey: string | null;
   language: string | null;
+  /** local_cli 附加参数：{audio}/{out} 令牌；无 {audio} 时音频路径追加末尾。 */
+  args: readonly string[] | null;
   /** 单请求超时（毫秒）。 */
   timeoutMs: number;
   /** 并发上限。 */
@@ -95,6 +97,8 @@ export interface AudioPluginConfig {
     model: string | undefined;
     apiKey: string | undefined;
     language: string | undefined;
+    /** local_cli 附加参数（置于音频文件参数前；支持 {audio}/{out} 令牌）。 */
+    args: string[] | undefined;
     timeoutMs: number;
     maxConcurrency: number;
   };
