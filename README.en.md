@@ -19,7 +19,7 @@
 ## Quick start
 
 | Step | Do |
-| --- | --- |
+| :--- | :--- |
 | 1 | Install ffmpeg ([commands below](#1-install-ffmpeg)); `ffmpeg -version` must print output |
 | 2 | Left sidebar **Plugins** → **Video understanding** → switch it on |
 | 3 | Click **Download local model** (~190 MB), then **Test transcription** |
@@ -47,7 +47,7 @@ ffprobe -version
 Both must print output. If not:
 
 | OS | Command |
-| --- | --- |
+| :--- | :--- |
 | Windows | `winget install Gyan.FFmpeg` |
 | macOS | `brew install ffmpeg` |
 | Ubuntu / Debian | `sudo apt install ffmpeg` |
@@ -82,7 +82,7 @@ To open the settings: **Plugins in the left sidebar → Video understanding → 
 Three cards at the top report video decode (ffmpeg), local transcription, and cloud transcription. Pick one path:
 
 | Path | Best for | What to do |
-| --- | --- | --- |
+| :--- | :--- | :--- |
 | Local (recommended) | Free, offline, no API key | Click "Download local model" (~190 MB), then "Test transcription" |
 | Cloud | You have a key, or the machine is slow | Pick OpenAI / Groq / a custom compatible endpoint, paste the key, save, then test |
 | Skip for now | Videos have subtitles | Use it as is; speech-only videos get no transcript |
@@ -125,7 +125,7 @@ The text block is structured metadata: each canvas packet reports time, form, an
 Four ways to look, by question:
 
 | Goal | Ask |
-| --- | --- |
+| :--- | :--- |
 | Overview first | "Look at this video" — streaming sampling; motion as process, settle as detail |
 | One exact moment | "What is written at 12.9s" — deterministic high-resolution frame |
 | Even coverage | "One frame every 5 seconds" — uniform sampling |
@@ -135,34 +135,32 @@ Four ways to look, by question:
 
 ### Dual-scale streaming perception
 
-Video is not sampled at a fixed rate. While the picture moves, low-resolution process units (P) record change; when it settles, high-resolution freeze units (F) keep detail. A single canvas packet carries both process and result, so the model does not need to re-watch a clip to recover one detail.
+Sampling is event-driven rather than fixed-rate. During motion, low-resolution process units (P) record state transitions; at settle, high-resolution freeze units (F) preserve detail. Both are delivered within a single canvas packet, so one observation carries the temporal process and the steady-state result together, and the model need not re-watch a clip to recover a detail.
 
-The sampling cadence follows the picture: fast change lowers density to avoid duplicates; slow change waits for a settle before freezing. Long static stretches keep a heartbeat instead of repeating images.
+Density adapts to picture activity: rapid change lowers the sampling rate to suppress redundant frames, while slow change extends the wait until a settle is detected; long static intervals maintain a temporal reference through heartbeats without retransmitting images.
 
 ### Canvas packing and metering
 
-A frame is divided into 42 px superpixel-aligned units. P or F units are taken as needed and packed into one canvas. One call can carry several packets; each packet holds only the units that are new, and older packets collapse into reference hashes instead of resending images. Metering follows the canvas grid (`r × (c + 1) + 2`).
+Each frame is partitioned on a 42 px superpixel grid; P or F units are selected as needed and assembled into a canvas. A call may carry multiple packets, and each packet contains only the units new relative to the previous one; historical packets collapse into content-hash references, keeping context bounded in long sessions. Metering follows canvas grid cells (`r × (c + 1) + 2`).
 
 ### Deterministic inspection
 
-Besides streaming, three paths are deterministic: `probe` reads metadata only; `timestamps` returns exact frames in milliseconds; `uniform` samples at a fixed interval; `roi_hint` crops a region. These do not depend on motion detection, so results are reproducible and suited to reading text, numbers, and small objects.
+Beyond streaming, four deterministic paths are provided: `probe` parses container metadata only; `timestamps` extracts exact frames at millisecond timestamps; `uniform` samples at a fixed interval; `roi_hint` crops and magnifies a normalized region. None depends on motion detection; outputs are reproducible and suited to verifying text, numerals, and small objects.
 
-### Three sources for speech
+### Cascaded speech sources
 
-1. **Subtitles**: a sidecar `.srt` / `.vtt` with the same name first, then embedded soft subtitles.
-2. **Acoustic check**: without subtitles, silence detection and a speech-ratio estimate run first; an all-silent video skips transcription.
-3. **Transcription**: local whisper.cpp, or OpenAI / Groq / a custom compatible endpoint. Segments are mounted on packets by PTS and stitched across block boundaries with a ±300 ms tolerance.
+Speech text is obtained through a three-stage cascade: a sidecar `.srt` / `.vtt` is read first, then embedded soft subtitles; without subtitles, silence detection and a speech-ratio estimate run, and an all-silent video skips transcription; finally ASR runs, either local whisper.cpp or OpenAI / Groq / a custom compatible endpoint. Segments are aligned by PTS and mounted on the corresponding packets, stitched across block boundaries with a ±300 ms tolerance.
 
-The default is "picture first, speech later": when the soft deadline (`graceMs`, 8 s by default) passes, the visual result returns and transcription continues in the background; the next call on the same video hits the disk cache.
+The default policy is vision-first with background transcription: once a call exceeds the soft deadline (`graceMs`, 8 s by default), the visual result returns and transcription continues in the background; later calls on the same video hit the disk cache.
 
-### Old regions
+### Cold regions in long videos
 
-Canvas packets outside the window collapse into references (anchor hash, time, and transcript text) instead of resending images. A timestamp call brings the detail back when needed.
+Historical packets outside the current window collapse into references (anchor hash, time, and transcript text) rather than retransmitting images; a timestamp call restores the detail when needed.
 
 ## Troubleshooting
 
 | Symptom | Read |
-| --- | --- |
+| :--- | :--- |
 | ffmpeg not found | [ffmpeg](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/排障.md#找不到-ffmpeg) |
 | Speech but no transcript | [No transcript](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/排障.md#有声音但没有台词) |
 | Model download fails or is slow | [Download](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/排障.md#下载失败) |
@@ -172,7 +170,7 @@ Canvas packets outside the window collapse into references (anchor hash, time, a
 ## Docs
 
 | Document | Contents |
-| --- | --- |
+| :--- | :--- |
 | [Usage Guide](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/usage-guide.md) | Usage, parameters, output, metering, every config key |
 | [使用指南](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/使用指南.md) | Chinese usage guide |
 | [排障](https://github.com/Weilv-D/dsh-pf-stream/blob/main/docs/排障.md) | Troubleshooting by symptom (Chinese) |
