@@ -2,7 +2,7 @@
 
 [中文](README.md) | **English**
 
-A video plugin for DeepSeek Harness (DSH). The agent uses it to watch local videos. During motion, the plugin records the process. At settle, it captures detail frames. Exact timestamps support full-resolution inspection.
+A video plugin for DeepSeek Harness (DSH). The agent uses it to watch local videos. During motion, the plugin records the process. At settle, it captures detail frames. Exact timestamps support full-resolution inspection. When the video carries speech, transcripts mount onto packets by time.
 
 ## Install
 

@@ -20,7 +20,8 @@ export const INTENT_DESCRIPTION =
   '2) 定点时间戳高清检视传 action=\'timestamps\' 与 timestamps_ms；' +
   '3) 均匀步长抽帧传 action=\'uniform\' 与 interval_ms/frame_count；' +
   "4) 仅探测视频元数据传 action='probe'；" +
-  '5) 局部区域聚焦或放大传归一化 roi_hint。';
+  '5) 局部区域聚焦或放大传归一化 roi_hint；' +
+  "6) 台词与字幕传 audio（extract_subtitles 全片字幕导航，language 指定 ASR 语言）。";
 
 /** 宿主 dsh-tools assertSupportedJsonSchema 允许的关键字子集内的值 schema。 */
 export interface ValueSchema {
@@ -68,6 +69,17 @@ export const intentValueSchema: ValueSchema = {
     max_packets: { type: 'number', description: '本次调用最多返回画布包数' },
     max_tokens_budget: { type: 'number', description: '本次调用视觉 Token 预算上限' },
     reset: { type: 'boolean', description: '重置会话意图为默认基准' },
+    audio: {
+      type: 'object',
+      description: '音频台词侧车：字幕/ASR 台词随画布包挂载（可用性取决于视频与配置）',
+      properties: {
+        mode: { type: 'string', enum: ['auto', 'off'], description: 'off 关闭音频侧车' },
+        language: { type: 'string', description: 'ASR 语言提示（如 zh、en）' },
+        extract_subtitles: { type: 'boolean', description: 'probe 返回全片字幕导航' },
+        assist_focus: { type: 'boolean', description: '语音停顿引导额外 F 定格' },
+      },
+      additionalProperties: false,
+    },
   },
   additionalProperties: false,
 };
@@ -110,7 +122,8 @@ export const TOOL_DESCRIPTION =
   'and roi_hint. Pass pts_window (ms) to inspect one segment; use action="uniform" with interval_ms ' +
   'or frame_count for an even overview. Repeat streaming calls resume from the last position, so a ' +
   'long video can be viewed in segments. Cite packet IDs, unit IDs, and timestamps from the returned ' +
-  'hint lines as evidence.';
+  'hint lines as evidence. When audio context is available, transcript segments are mounted on packets as ' +
+  '"Audio" hint lines; cite them with their timestamps for spoken content.';
 
 /** 输出 schema：随各里程碑交付逐步收紧，当前为对象根。 */
 export const toolOutputSchema = {

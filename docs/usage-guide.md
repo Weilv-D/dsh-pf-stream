@@ -28,6 +28,10 @@ One primary tool `dsh-pf-stream`, routed by `intent.action`:
 | `frame_count` | number | Target frame count for `uniform` mode; clamped by `maxFramesPerCall` |
 | `max_packets` | number | Canvas packet limit for this call; clamped by `maxPacketsPerCall` |
 | `max_tokens_budget` | number | Vision token budget for this call (≥274); clamped by `maxTokensBudgetPerCall` |
+| `audio.mode` | `auto` \| `off` | Audio channel switch for this call; default `auto` |
+| `audio.language` | string | Transcription language hint (for example `zh`); default auto-detect |
+| `audio.extract_subtitles` | boolean | Whether this probe extracts subtitles; default follows config |
+| `audio.assist_focus` | boolean | Whether this call enables speech-assisted focus; default follows config |
 | `reset` | boolean | Reset session intent to defaults first, then merge this call's fields |
 
 `uniform` mode requires `interval_ms` or `frame_count`; otherwise the call fails with `PFSTREAM_UNIFORM_PARAMS_MISSING`.
@@ -90,6 +94,7 @@ Each call returns one text block plus image content blocks:
 - **Text block**: structured metadata JSON. Per packet: `packet_id`, layout form, trigger path, dual-carrier SHA-256, per-unit PTS and bboxes, and telemetry (decode timings, ffmpeg spawn args, control-parameter snapshot, precheck result).
 - **Image blocks**: one canvas PNG per packet, submitted through the host attachment service into model context. At most `maxImagesPerCall` images per call; older packets beyond the limit return metadata only.
 - **Timeline hint lines**: model-readable P/F unit timelines, e.g. `[Packet #42 | Anchor: #105 | #101(P, 12.1s, Left-Top) → …]`.
+- **Audio**: when the video carries speech, transcripts mount onto packets at matching times (an `Audio @Packet #N` hint line plus `audio` metadata). Source order: external or embedded subtitles → acoustic VAD plus ASR → skip silently when no speech. Transcript text stays in the original language.
 - **Heartbeats**: one heartbeat every 5 s (PTS domain) during long static periods, triggering a state health check.
 
 ## Canvas forms and billing
@@ -122,6 +127,18 @@ Dual-tone separator lines block edge-feature crosstalk between units. With `rend
 | `defaultStreamWindowMs` | `10000` | Streaming window length when `pts_window` is absent (ms) |
 | `streamWorkMaxEdge` | `2048` | Streaming decode work-resolution long edge; deterministic inspection always decodes full resolution |
 | `epochCompactionWindow` | `6` | Hot-to-cold compaction window (packets) |
+| `audio.mode` | `auto` | Audio channel mode (`auto` enabled; `off` disabled) |
+| `audio.extractSubtitles` | `true` | Extract embedded or external subtitles on probe |
+| `audio.assistFocus` | `true` | Soft focus enhancement at speech-dense pauses |
+| `audio.sliceCodec` | `mp3` | Audio slice codec (`mp3` or `opus`) |
+| `audio.cacheDir` | `~/.dsh/cache/dsh-pf-stream` | Transcript cache directory (reused per file fingerprint) |
+| `audio.graceMs` | `8000` | Transcription soft deadline (ms); visual results return first on timeout |
+| `audio.asr.provider` | `none` | Transcription provider (`none` / `openai_verbose` / `openai_basic` / `local_cli`) |
+| `audio.asr.baseUrl` | OpenAI official | Transcription endpoint (OpenAI-compatible protocol) |
+| `audio.asr.model` | `whisper-1` | Transcription model name |
+| `audio.asr.apiKey` | empty | Transcription key; the `DSH_ASR_API_KEY` environment variable takes priority |
+| `audio.asr.timeoutMs` | `8000` | Per-chunk transcription timeout (ms) |
+| `audio.asr.maxConcurrency` | `2` | Concurrency for long-audio chunked transcription |
 | `meteringProfile.maxTokensPerImage` | `1024` | Vision token limit per image |
 | `meteringProfile.maxImagesPerRequest` | `600` | Image count limit per request |
 | `meteringProfile.imageCountTiersEnabled` | `false` | Gate for the ≥15-images/4096px rule |

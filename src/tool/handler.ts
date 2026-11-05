@@ -12,6 +12,7 @@ import { adaptCallArgs } from '../entry/adapter.js';
 import type { InspectionResult } from '../stage3/deterministicRouter.js';
 import type { PacketArtifact } from '../stage4/canvasPacker.js';
 import type { StreamCallResult } from './streamCall.js';
+import type { AudioSettings, SubtitleTimeline } from '../audio/types.js';
 
 export { PfStreamError } from '../errors.js';
 
@@ -76,12 +77,25 @@ export type StreamFn = (
   signal: AbortSignal | undefined,
 ) => Promise<StreamCallResult>;
 
+export interface AudioToolDeps {
+  /** 按调用意图解析音频设置（env > Config > intent 覆盖）。 */
+  resolveSettings(intent: IntentDirective | undefined): AudioSettings;
+  /** 软失败的字幕时间线加载（无字幕/失败返回 null，不抛错）。 */
+  subtitlesFor(
+    videoPath: string,
+    probe: ProbeResult,
+    signal: AbortSignal | undefined,
+  ): Promise<SubtitleTimeline | null>;
+}
+
 export interface ToolDeps {
   probe: ProbeFn;
   inspect?: InspectFn | undefined;
   stream?: StreamFn | undefined;
   /** 宿主附件回传（可选：缺省时只返回画布元数据）。 */
   attachImages?: AttachImagesFn | undefined;
+  /** 音频台词侧车（可选：缺省时 probe 不带字幕导航）。 */
+  audio?: AudioToolDeps | undefined;
   /** 入口适配器钳制上限（缺省用插件默认配置值）。 */
   limits?: { maxPackets: number; maxTokensBudget: number; maxFrames: number } | undefined;
 }
@@ -127,7 +141,23 @@ export async function handleToolCall(
   const action = intent.action ?? 'pf_stream';
 
   if (action === 'probe') {
-    return { action: 'probe', probe: probeResult };
+    const result: ToolResult = { action: 'probe', probe: probeResult };
+    const settings = deps.audio?.resolveSettings(intent);
+    if (settings?.extractSubtitles) {
+      const timeline = await deps.audio!.subtitlesFor(args.video_path, probeResult, exec?.signal);
+      if (timeline) {
+        result.subtitles = {
+          source: timeline.status,
+          language: timeline.language,
+          segments: timeline.segments.map((s) => ({
+            startMs: s.startMs,
+            endMs: s.endMs,
+            text: s.text,
+          })),
+        };
+      }
+    }
+    return result;
   }
   if (action === 'timestamps' || action === 'uniform') {
     if (!deps.inspect) {
@@ -148,13 +178,21 @@ export async function handleToolCall(
     }
     const stream = await deps.stream(args.video_path, probeResult, intent, resolveSessionId(exec), exec?.signal);
     const packets = await withPacketImages(stream.packets, deps.attachImages);
+    const audioByPacket = stream.audioByPacket;
+    const packetsWithAudio = audioByPacket
+      ? packets.map((p) => {
+          const mount = audioByPacket[p.packetId as number];
+          return mount ? { ...p, audio: mount } : p;
+        })
+      : packets;
     return {
       action: 'pf_stream',
       probe: probeResult,
-      packets,
+      packets: packetsWithAudio,
       hintLines: stream.hintLines,
       heartbeats: stream.heartbeats,
       telemetry: stream.telemetry,
+      audio: stream.audio,
       session: { intentId: stream.sessionIntentId },
     };
   }

@@ -29,6 +29,7 @@ import type {
   SessionVideoState,
   UnitDescriptor,
 } from '../types.js';
+import type { TranscriptSegment } from '../audio/types.js';
 
 export const HOT_WINDOW = 2;
 
@@ -37,13 +38,16 @@ export function recordPackets(
   slot: SessionVideoState,
   session: SessionState,
   artifacts: PacketArtifact[],
+  audioSegmentsByPacket?: Map<number, TranscriptSegment[]>,
 ): void {
   for (const a of artifacts) {
+    const audioSegments = audioSegmentsByPacket?.get(a.packet.packetId);
     slot.history.packets.push({
       packet: a.packet,
       imageBytes: a.imageBytes,
       anchorBytes: a.anchorBytes,
       anchorFContentHash: a.anchorFContentHash,
+      audioSegments: audioSegments !== undefined && audioSegments.length > 0 ? audioSegments : undefined,
     });
     slot.epoch.pendingNew += 1;
     if (a.packet.anchorFId != null && a.anchorBytes) {
@@ -150,6 +154,7 @@ export function compactEpoch(
           sourceCropBbox: fUnit.sourceCropBbox,
           bytes: entry.anchorBytes!,
           contentHash: session.fUnitCache.get(p.anchorFId!)?.contentHash,
+          audioSegments: entry.audioSegments,
         },
       );
     }

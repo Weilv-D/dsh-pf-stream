@@ -8,6 +8,12 @@
  * 后者满足 x = 42*col, y = 42*row。source 坐标一律处于转正后的显示坐标系。
  */
 
+import type {
+  AudioPluginConfig,
+  IntentAudioDirective,
+  TranscriptSegment,
+} from './audio/types.js';
+
 // ---------------------------------------------------------------------------
 // 消费端契约类型
 // ---------------------------------------------------------------------------
@@ -66,6 +72,8 @@ export interface IntentDirective {
   max_packets?: number;
   max_tokens_budget?: number;
   reset?: boolean;
+  /** 音频台词侧车指令（字幕提取/ASR 语言/assistFocus 开关）。 */
+  audio?: IntentAudioDirective;
 }
 
 export interface SessionIntent {
@@ -178,6 +186,8 @@ export interface HistoryEntry {
   anchorBytes: Buffer | null;
   /** F 载体规范化像素内容哈希（§6 降级轨；不含 F 时为 null）。 */
   anchorFContentHash: string | null;
+  /** 冷区引用时 100% 保留的台词段（音频侧车写入；JSON 安全）。 */
+  audioSegments?: TranscriptSegment[] | undefined;
 }
 
 /** 发包历史环形队列：按包龄旧→新排列；热区为最近 2 包，冷区至多 maxColdRefs 包。 */
@@ -198,6 +208,8 @@ export interface ColdRefPlan {
   bytes: Buffer;
   /** F 载体规范化像素内容哈希（§6 降级轨）。 */
   contentHash?: string | undefined;
+  /** 源包台词段（Epoch 内逐字节复用）。 */
+  audioSegments?: TranscriptSegment[] | undefined;
 }
 
 /** Epoch Compaction 状态：窗口内冷区引用零变动（前缀稳定）。 */
@@ -377,4 +389,6 @@ export interface PfStreamPluginConfig {
   streamWorkMaxEdge: number;
   epochCompactionWindow: number;
   meteringProfile: MeteringProfile;
+  /** 音频台词侧车（三级顺位：字幕 → VAD+ASR → 跳过）。 */
+  audio: AudioPluginConfig;
 }

@@ -23,6 +23,19 @@ import {
 import { baselinesFromIntent, mergeSessionIntent, sessionIntentChanged } from '../stage5/intent.js';
 import { fingerprintOf, getSessionState, getVideoSlot } from '../session/state.js';
 import type { IntentDirective, ProbeResult } from '../types.js';
+import {
+  audioHintLine,
+  coldRefAudioHintLine,
+  mountSegments,
+  runAudioSidecar,
+} from '../audio/sidecar.js';
+import { scanVad } from '../audio/acousticVad.js';
+import type {
+  AudioContextSummary,
+  AudioSettings,
+  PacketAudioMount,
+  TranscriptSegment,
+} from '../audio/types.js';
 
 export interface StreamCallOptions {
   ffmpegPath: string;
@@ -41,6 +54,8 @@ export interface StreamCallOptions {
   imageCountTiersEnabled: boolean;
   /** 单图视觉 Token 上限（meteringProfile 口径，缺省不校验）。 */
   maxTokensPerImage?: number | undefined;
+  /** 音频台词侧车（缺省关闭；零侵入视觉主链路）。 */
+  audio?: { settings: AudioSettings; ffmpegPath: string; tempDir?: string | undefined } | undefined;
   signal?: AbortSignal | undefined;
 }
 
@@ -67,6 +82,10 @@ export interface StreamCallResult extends Omit<StreamRunResult, 'telemetry'> {
   hotRefCount: number;
   sessionIntentId: string;
   appliedIntentId: string;
+  /** 音频侧车上下文摘要（无音频/关闭时 status='no_audio'|'disabled'）。 */
+  audio: AudioContextSummary;
+  /** 按包挂载的台词（仅含实际有台词的包）。 */
+  audioByPacket: Record<number, PacketAudioMount>;
 }
 
 /**
@@ -124,13 +143,57 @@ async function runStreamCallLocked(
   merged.intentId = `intent_${session.intentSeq}`;
   session.intent = merged;
 
+  // 音频侧车（零侵入）：assistFocus 需要在解码前拿到语音岛 → 先做一次
+  // VAD 预扫（本地 ffmpeg，窗口量级毫秒级），全量侧车与解码并行。
+  const audio = options.audio;
+  const windowMs = intent.pts_window
+    ? Math.max(1, intent.pts_window[1] - intent.pts_window[0])
+    : options.defaultStreamWindowMs;
+  const lastPts = probe.lastPtsMs;
+  const windowStart = Math.min(
+    Math.max(0, intent.pts_window?.[0] ?? slot.cursor.lastConsumedPtsMs),
+    lastPts,
+  );
+  const windowEnd = Math.min(windowStart + windowMs, lastPts);
+  const audioWindow: [number, number] | null = windowEnd > windowStart ? [windowStart, windowEnd] : null;
+  let preVad = null;
+  const audioEnabled =
+    audio !== undefined &&
+    audio.settings.mode !== 'off' &&
+    audioWindow !== null &&
+    probe.audioStreams.length > 0;
+  if (audioEnabled && audio.settings.assistFocus) {
+    try {
+      preVad = await scanVad(videoPath, audioWindow, {
+        ffmpegPath: audio.ffmpegPath,
+        signal: options.signal,
+      });
+    } catch {
+      preVad = null;
+    }
+  }
+  const sidecarPromise =
+    audioEnabled && audio
+      ? runAudioSidecar(
+          {
+            videoPath,
+            probe,
+            ffmpegPath: audio.ffmpegPath,
+            settings: audio.settings,
+            tempDir: audio.tempDir,
+            signal: options.signal,
+            precomputedVad: preVad,
+          },
+          audioWindow,
+          Date.now() + audio.settings.graceMs,
+        ).catch(() => null)
+      : null;
+
   const result = await runStreamPass(videoPath, probe, merged, slot.cursor, {
     ffmpegPath: options.ffmpegPath,
     ffprobePath: options.ffprobePath,
     renderVisualId: options.renderVisualId,
-    windowMs: intent.pts_window
-      ? Math.max(1, intent.pts_window[1] - intent.pts_window[0])
-      : options.defaultStreamWindowMs,
+    windowMs,
     windowStartMs: intent.pts_window?.[0],
     streamWorkMaxEdge: options.streamWorkMaxEdge,
     maxPackets: intent.max_packets ?? options.maxPacketsPerCall,
@@ -139,6 +202,10 @@ async function runStreamCallLocked(
     packetIdStart: session.packetSeq + 1,
     globalIdStart: session.globalUnitSeq + 1,
     heartbeatSeqStart: session.heartbeatSeq + 1,
+    audioAssist:
+      audioEnabled && preVad !== null
+        ? { islands: preVad.islands, speechRate: null }
+        : undefined,
     signal: options.signal,
   });
 
@@ -147,10 +214,46 @@ async function runStreamCallLocked(
   session.globalUnitSeq = result.counters.globalUnitSeq;
   session.heartbeatSeq = result.counters.heartbeatSeq;
 
+  // 音频侧车收尾（软截止内完成则挂载；超时/失败折叠为非 ok 状态）
+  const sidecar = sidecarPromise !== null ? await sidecarPromise : null;
+  const newPacketWindows = result.packets.map((artifact) => {
+    const units = artifact.packet.units;
+    const times = units.map((u) => u.timestampMs);
+    return {
+      packetId: artifact.packet.packetId,
+      startMs: times.length > 0 ? Math.min(...times) : 0,
+      endMs: times.length > 0 ? Math.max(...times) : 0,
+      unitIds: units.map((u) => ({ globalId: u.globalId, timestampMs: u.timestampMs })),
+    };
+  });
+  const newMounts =
+    sidecar !== null && sidecar.segments.length > 0 && result.packets.length > 0
+      ? mountSegments(
+          newPacketWindows,
+          sidecar.segments,
+          sidecar.context.status,
+          sidecar.context.source,
+          sidecar.context.language,
+        )
+      : new Map<number, PacketAudioMount>();
+  const audioSegmentsByPacket = new Map<number, TranscriptSegment[]>();
+  for (const [pid, mount] of newMounts) {
+    audioSegmentsByPacket.set(
+      pid,
+      mount.segments.map((s) => ({
+        segId: s.segId,
+        startMs: s.startMs,
+        endMs: s.endMs,
+        text: s.text,
+        source: s.source,
+      })),
+    );
+  }
+
   // Stage 6：热区引用取自本次记录之前的历史环尾部（热区=上一次调用的包），
   // 再记录新包 → Epoch 收敛 → 冷区规划 → 预检门控
   const hot = planHistoryRefs(slot, merged.intentId).hot;
-  recordPackets(slot, session, result.packets);
+  recordPackets(slot, session, result.packets, audioSegmentsByPacket);
   compactEpoch(
     slot,
     session,
@@ -201,7 +304,12 @@ async function runStreamCallLocked(
       const plan = slot.epoch.coldRefs.find(
         (c) => c.refPacketId === it.artifact.packet.packetId,
       );
-      if (plan) keptHintLines.push(coldRefHintLine(plan));
+      if (plan) {
+        keptHintLines.push(coldRefHintLine(plan));
+        if (plan.audioSegments !== undefined && plan.audioSegments.length > 0) {
+          keptHintLines.push(coldRefAudioHintLine(plan.sourcePacketId, plan.audioSegments.length));
+        }
+      }
     } else if (it.kind === 'hot') {
       keptHintLines.push(timelineHintLine(it.artifact.packet, merged.roiHint ?? null));
     }
@@ -211,6 +319,48 @@ async function runStreamCallLocked(
     const m = /Packet #(\d+)/.exec(line);
     if (m && newIdSet.has(Number(m[1]))) keptHintLines.push(line);
   }
+  // 台词行紧跟对应增量包提示行（时序）
+  for (const it of precheck.kept) {
+    if (it.kind !== 'new') continue;
+    const mount = newMounts.get(it.artifact.packet.packetId);
+    if (mount) keptHintLines.push(audioHintLine(it.artifact.packet.packetId, mount));
+  }
+
+  // 冷区引用的台词挂载（Epoch 内 100% 保留）
+  const audioByPacket: Record<number, PacketAudioMount> = {};
+  for (const [pid, mount] of newMounts) {
+    if (newIdSet.has(pid)) audioByPacket[pid] = mount;
+  }
+  for (const it of precheck.kept) {
+    if (it.kind !== 'cold') continue;
+    const plan = slot.epoch.coldRefs.find(
+      (c) => c.refPacketId === it.artifact.packet.packetId,
+    );
+    if (plan !== undefined && plan.audioSegments !== undefined && plan.audioSegments.length > 0) {
+      audioByPacket[plan.refPacketId] = {
+        status: 'ok',
+        source: null,
+        language: null,
+        segments: plan.audioSegments,
+      };
+    }
+  }
+
+  const audioContext: AudioContextSummary =
+    sidecar !== null
+      ? sidecar.context
+      : {
+          status: audio !== undefined && audio.settings.mode === 'off' ? 'disabled' : 'no_audio',
+          source: null,
+          language: null,
+          speechRatio: null,
+          rmsDb: null,
+          speechRateCps: null,
+          segmentsInWindow: 0,
+          mountedPackets: Object.keys(audioByPacket).length,
+          telemetry: { cacheHit: false, chunks: 0, requests: 0, droppedByGuard: 0, costMs: 0 },
+        };
+  audioContext.mountedPackets = Object.keys(audioByPacket).length;
 
   return {
     ...result,
@@ -221,6 +371,8 @@ async function runStreamCallLocked(
     hotRefCount: precheck.kept.filter((it) => it.kind === 'hot').length,
     sessionIntentId: merged.intentId,
     appliedIntentId: merged.intentId,
+    audio: audioContext,
+    audioByPacket,
   };
 }
 

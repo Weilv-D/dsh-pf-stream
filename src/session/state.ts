@@ -20,6 +20,7 @@ import type {
   StreamCursor,
   VideoFingerprint,
 } from '../types.js';
+import type { TranscriptSegment } from '../audio/types.js';
 
 /** 视频指纹：规范化路径 + size + mtime 联合哈希前 16 hex。 */
 export function fingerprintOf(videoPath: string): VideoFingerprint {
@@ -138,11 +139,14 @@ interface SnapshotVideo {
       imageBytes: string;
       anchorBytes: string | null;
       anchorFContentHash: string | null;
+      audioSegments?: TranscriptSegment[] | undefined;
     }>;
   };
   epoch: {
     pendingNew: number;
-    coldRefs: Array<Omit<ColdRefPlan, 'bytes'> & { bytes: string; contentHash?: string | undefined }>;
+    coldRefs: Array<
+      Omit<ColdRefPlan, 'bytes'> & { bytes: string; contentHash?: string | undefined }
+    >;
   };
 }
 
@@ -194,6 +198,7 @@ export function exportSessionSnapshot(state: SessionState): string {
             imageBytes: h.imageBytes.toString('base64'),
             anchorBytes: h.anchorBytes ? h.anchorBytes.toString('base64') : null,
             anchorFContentHash: h.anchorFContentHash,
+            audioSegments: h.audioSegments,
           })),
         },
         epoch: {
@@ -208,6 +213,7 @@ export function exportSessionSnapshot(state: SessionState): string {
             sourceCropBbox: r.sourceCropBbox,
             bytes: r.bytes.toString('base64'),
             contentHash: r.contentHash,
+            audioSegments: r.audioSegments,
           })),
         },
       },
@@ -285,6 +291,7 @@ export function importSessionSnapshot(json: string): SessionState {
           imageBytes: Buffer.from(h.imageBytes, 'base64'),
           anchorBytes: h.anchorBytes != null ? Buffer.from(h.anchorBytes, 'base64') : null,
           anchorFContentHash: h.anchorFContentHash,
+          audioSegments: h.audioSegments,
         })),
       },
       epoch: {
@@ -299,6 +306,7 @@ export function importSessionSnapshot(json: string): SessionState {
           sourceCropBbox: r.sourceCropBbox,
           bytes: Buffer.from(r.bytes, 'base64'),
           contentHash: r.contentHash,
+          audioSegments: r.audioSegments,
         })),
       },
     });

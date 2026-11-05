@@ -18,3 +18,6 @@ test/fixtures/media/
 *.log
 .DS_Store
 Thumbs.db
+
+# 内部设计文档（本地保留，不入库）
+docs/视听融合架构设计.md

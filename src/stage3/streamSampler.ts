@@ -44,6 +44,7 @@ import type {
   TriggerPath,
 } from '../types.js';
 import type { RgbImage } from '../utils/image.js';
+import { assistFocusShouldFire } from '../audio/sidecar.js';
 
 export const STEP_MS = 33.3;
 export const T_MERGE_MS = 50;
@@ -69,6 +70,8 @@ export interface StreamRunOptions {
   packetIdStart: number;
   globalIdStart: number;
   heartbeatSeqStart: number;
+  /** 音频侧车 assistFocus 输入（语音岛；缺省关闭）。 */
+  audioAssist?: { islands: Array<[number, number]>; speechRate: number | null } | undefined;
   signal?: AbortSignal | undefined;
 }
 
@@ -89,6 +92,8 @@ export interface StreamTelemetry {
   ctrlParams: StreamBaselines;
   /** 500ms 节拍生效值轨迹（R1/R2/R3/R4 断言用）。 */
   ctrlTickLog: CtrlTickLogEntry[];
+  /** assistFocus（语音停顿引导 F 定格）触发次数。 */
+  audioAssistFires: number;
 }
 
 export interface StreamRunResult {
@@ -128,6 +133,10 @@ interface RuntimeState {
   motionEnteredAtPtsMs: number | null;
   lastFEmittedPtsMs: number | null;
   lastHeartbeatPtsMs: number | null;
+  /** 自上一张 F 以来的 Σd_t（assistFocus 判定输入；窗口内累计）。 */
+  sumDtSinceF: number;
+  /** 已触发过 assistFocus 的岛结束时刻（同岛只触发一次）。 */
+  assistFiredIslandEnd: number | null;
   tokensUsed: number;
 }
 
@@ -182,6 +191,7 @@ export async function runStreamPass(
   let lastPtsOfWindow: number | null = null;
   const ffmpegSpawns: string[][] = [];
   let arenaMaxHeld = 0;
+  let audioAssistFires = 0;
 
   /**
    * 发包：形态由可用单元数决定，调用方不必保证计数。
@@ -279,6 +289,7 @@ export async function runStreamPass(
     hintLines.push(timelineHintLine(artifact.packet, sessionIntent.roiHint ?? null));
     if (fUnit) {
       rt.lastFEmittedPtsMs = fUnit.ptsMs;
+      rt.sumDtSinceF = 0;
     }
     rt.tokensUsed += form === 'FORM_1_STANDARD_STRIP' || form === 'FORM_4_PARTIAL_STRIP' ? 530 : 274;
     packMs += performance.now() - t0;
@@ -507,6 +518,28 @@ export async function runStreamPass(
           rt.lastHeartbeatPtsMs = ptsMs;
         }
 
+        // ---- assistFocus：语音停顿引导 F 定格（软增强，不改状态机）----
+        rt.sumDtSinceF += signal.d;
+        if (options.audioAssist !== undefined && rt.machine.state === 'STATIC') {
+          const islandEnd = assistFocusShouldFire(
+            options.audioAssist,
+            ptsMs,
+            rt.machine.enteredAtPtsMs,
+            rt.lastFEmittedPtsMs,
+            rt.sumDtSinceF,
+            rt.assistFiredIslandEnd,
+          );
+          if (islandEnd !== null && rt.pendingF === null) {
+            rt.pendingF = {
+              ...capture(frame, ptsMs, 'F', signal.dLocal, signal.topK),
+              eventType: 'SETTLE',
+            };
+            emit('SETTLE');
+            rt.assistFiredIslandEnd = islandEnd;
+            audioAssistFires++;
+          }
+        }
+
         // 擂台单槽不变量观测：同一时刻持有的 672 槽位数（MOTION 擂台 + SETTLE 观察窗各 1）
         const arenaHeld = (rt.motionArena !== null ? 1 : 0) + (rt.settleArena !== null ? 1 : 0);
         if (arenaHeld > arenaMaxHeld) arenaMaxHeld = arenaHeld;
@@ -550,6 +583,7 @@ export async function runStreamPass(
       stopReason,
       ctrlParams: { ...ctrl.live },
       ctrlTickLog: ctrl.tickLog.slice(),
+      audioAssistFires,
     },
     nextCursor: buildCursor(rt, cursor, lastPtsOfWindow ?? w0, ctrl),
     counters,
@@ -592,6 +626,8 @@ function restoreRuntime(cursor: StreamCursor): RuntimeState {
     motionEnteredAtPtsMs: s.motionEnteredAtPtsMs ?? null,
     lastFEmittedPtsMs: cursor.lastEmittedPacketPtsMs,
     lastHeartbeatPtsMs: s.lastHeartbeatPtsMs ?? null,
+    sumDtSinceF: 0,
+    assistFiredIslandEnd: null,
     tokensUsed: 0,
   };
 }
@@ -646,6 +682,7 @@ function emptyTelemetry(
     stopReason,
     ctrlParams: baselines,
     ctrlTickLog: [],
+    audioAssistFires: 0,
   };
 }
 

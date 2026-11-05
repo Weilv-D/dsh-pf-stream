@@ -10,6 +10,8 @@
 
 import Schema from '@deepseek-ai/schemastery';
 import type { Context } from '@deepseek-ai/cordis';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { PfStreamPluginConfig } from './types.js';
 import {
   handleToolCall,
@@ -28,6 +30,10 @@ import { probeVideo } from './stage0/probe.js';
 import { runDeterministicInspection } from './stage3/deterministicRouter.js';
 import { runStreamCall } from './tool/streamCall.js';
 import { resolveBinPaths } from './utils/ffmpegBin.js';
+import { resolveAudioSettings } from './audio/sidecar.js';
+import { loadSubtitleTimeline } from './audio/subtitleExtractor.js';
+import type { AudioSettings } from './audio/types.js';
+import type { IntentDirective } from './types.js';
 
 export const name = 'dsh-pf-stream';
 
@@ -52,6 +58,23 @@ export const Config = Schema.object({
   defaultStreamWindowMs: Schema.number().default(10000).description('流式窗口缺省长度（毫秒）'),
   streamWorkMaxEdge: Schema.number().default(2048).description('流式解码工作分辨率长边上限'),
   epochCompactionWindow: Schema.number().default(6).description('热转冷批量收敛窗口（包数）'),
+  audio: Schema.object({
+    mode: Schema.string().default('auto').description('音频侧车模式（off 关闭）'),
+    extractSubtitles: Schema.boolean().default(true).description('优先提取字幕作为台词源'),
+    assistFocus: Schema.boolean().default(true).description('语音停顿引导额外 F 定格'),
+    sliceCodec: Schema.string().default('mp3').description('ASR 切片编码（mp3 或 opus）'),
+    cacheDir: Schema.string().default(join(homedir(), '.dsh', 'cache', 'dsh-pf-stream')).description('转写缓存目录'),
+    graceMs: Schema.number().default(8000).description('音频软截止（毫秒）'),
+    asr: Schema.object({
+      provider: Schema.string().default('none').description('ASR provider（none/openai_verbose/openai_basic/local_cli）'),
+      baseUrl: Schema.string().description('OpenAI 兼容端点（缺省官方）'),
+      model: Schema.string().description('模型名或本地 CLI 可执行文件路径（local_cli）'),
+      apiKey: Schema.string().description('API key（环境变量 DSH_ASR_API_KEY 优先）'),
+      language: Schema.string().description('语言提示（如 zh、en）'),
+      timeoutMs: Schema.number().default(8000).description('单请求超时（毫秒）'),
+      maxConcurrency: Schema.number().default(2).description('分块并发上限'),
+    }),
+  }),
   meteringProfile: Schema.object({
     superpixelPx: Schema.const(42).description('超像素边长（像素）'),
     rounding: Schema.const('ceil').description('计费序列长度取整方式'),
@@ -168,6 +191,8 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
   const { config } = _deps;
   const bins = resolveBinPaths({ ffmpegPath: config.ffmpegPath, ffprobePath: config.ffprobePath });
   const attachments = resolveAttachments(_deps.ctx);
+  const audioSettings = (intent: IntentDirective | undefined): AudioSettings =>
+    resolveAudioSettings(config.audio, intent, process.env);
   const attachImages: AttachImagesFn = (artifacts) =>
     savePacketImages(attachments, artifacts, config.maxImagesPerCall);
   const probe: ProbeFn = (videoPath, signal) =>
@@ -199,6 +224,11 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
       epochCompactionWindow: config.epochCompactionWindow,
       imageCountTiersEnabled: config.meteringProfile.imageCountTiersEnabled,
       maxTokensPerImage: config.meteringProfile.maxTokensPerImage,
+      audio: {
+        settings: audioSettings(intent),
+        ffmpegPath: bins.ffmpeg,
+        tempDir: config.tempDir,
+      },
       signal,
     });
   return {
@@ -221,6 +251,13 @@ export function buildToolDefinition(_deps: { ctx: HostContext; config: PfStreamP
         inspect,
         stream,
         attachImages,
+        audio: {
+          resolveSettings: audioSettings,
+          subtitlesFor: (videoPath, probeResult, signal) =>
+            loadSubtitleTimeline(videoPath, probeResult, { ffmpegPath: bins.ffmpeg, signal })
+              .then((timeline) => (timeline.status === 'none' ? null : timeline))
+              .catch(() => null),
+        },
         limits: {
           maxPackets: config.maxPacketsPerCall,
           maxTokensBudget: config.maxTokensBudgetPerCall,
