@@ -1,6 +1,6 @@
 {
   "name": "dsh-pf-stream",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "DeepSeek Harness video understanding plugin: adaptive dual-scale streaming sampling plus deterministic inspection, with subtitles or transcribed speech and a self-service setup panel.",
   "type": "module",
   "repository": {
