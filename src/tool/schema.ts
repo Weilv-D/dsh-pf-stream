@@ -51,7 +51,7 @@ export const intentValueSchema: ValueSchema = {
     mode: { type: 'string', enum: ['dense', 'standard', 'sparse'] },
     focus: { type: 'string', enum: ['motion', 'detail', 'balanced'] },
     pts_window: { type: 'array', items: { type: 'number' }, description: '处理时间窗 [start_ms, end_ms]（PTS 域）；跨度建议 ≤240s，跨度过大时会在单次墙钟上限处提前停止（stopReason=wall_clock）' },
-    timestamps_ms: { type: 'array', items: { type: 'number' }, description: '确定性抽帧时间戳列表（毫秒）' },
+    timestamps_ms: { type: 'array', items: { type: 'number' }, description: '确定性抽帧时间戳列表（毫秒）；数量上限 maxFrames（默认 128），超出报错请分段' },
     interval_ms: { type: 'number', description: '均匀抽帧间隔（毫秒）' },
     frame_count: { type: 'number', description: '均匀抽帧目标总帧数' },
     roi_hint: {

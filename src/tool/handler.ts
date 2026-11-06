@@ -141,7 +141,7 @@ export async function handleToolCall(
     lastPtsMs: probeResult.lastPtsMs,
     displayWidth: probeResult.displayWidth,
     displayHeight: probeResult.displayHeight,
-    maxPackets: deps.limits?.maxPackets ?? 64,
+    maxPackets: deps.limits?.maxPackets ?? 20,
     maxTokensBudget: deps.limits?.maxTokensBudget ?? 65536,
     maxFrames: deps.limits?.maxFrames ?? 128,
   });

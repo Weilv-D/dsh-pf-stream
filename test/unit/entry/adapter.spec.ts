@@ -153,6 +153,33 @@ describe('adaptCallArgs：归一化 + 校验 + 钳制', () => {
   });
 });
 
+describe('adaptCallArgs：timestamps_ms 长度上限', () => {
+  it('超过 maxFrames 报 PFSTREAM_ARGS_TIMESTAMPS（显式点位清单不静默截断）', () => {
+    const list = Array.from({ length: 129 }, (_, i) => i * 10);
+    try {
+      adaptCallArgs(
+        { video_path: 'v.mp4', intent: { action: 'timestamps', timestamps_ms: list } },
+        LIMITS,
+      );
+      expect.unreachable('应抛出 PFSTREAM_ARGS_TIMESTAMPS');
+    } catch (error) {
+      expect(error).toBeInstanceOf(PfStreamError);
+      expect((error as PfStreamError).code).toBe('PFSTREAM_ARGS_TIMESTAMPS');
+      expect((error as PfStreamError).message).toContain('请分段调用');
+    }
+  });
+
+  it('恰为 maxFrames 放行并逐项钳制', () => {
+    const list = Array.from({ length: 128 }, (_, i) => i * 10);
+    const { intent } = adaptCallArgs(
+      { video_path: 'v.mp4', intent: { action: 'timestamps', timestamps_ms: list } },
+      LIMITS,
+    );
+    expect(intent.timestamps_ms).toHaveLength(128);
+    expect(intent.timestamps_ms![0]).toBe(0);
+  });
+});
+
 describe('mergeSessionIntent：reset 语义', () => {
   const prev = { intentId: 'intent_2', mode: 'standard' as const, focus: 'balanced' as const, fullFrame: false };
   it('reset:true 与新字段同调用时新字段生效（不被默认值覆盖）', () => {

@@ -68,6 +68,12 @@ describe('A4 幻觉清洗', () => {
     expect(stripEmoji('你好，世界！')).toBe('你好，世界！');
   });
 
+  it('stripEmoji 空白收拢：全角空格与 emoji 遗留空白一并归一', () => {
+    expect(stripEmoji('🎼\u3000歌词继续')).toBe('歌词继续');
+    expect(stripEmoji('a\t🎼\u3000b')).toBe('a b');
+    expect(guardSegments([seg(1, 0, 1000, '🎼\u3000')], null)).toEqual({ segments: [], dropped: 1 });
+  });
+
   it('foldRepeats 纯函数', () => {
     expect(foldRepeats('哈哈哈哈的')).toBe('哈的');
     expect(foldRepeats('ok ok ok go')).toBe('ok go');

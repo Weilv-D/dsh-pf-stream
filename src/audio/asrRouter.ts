@@ -39,6 +39,8 @@ export interface AsrRunResult {
   /** 窗口内全部可用段（缓存命中 + 本次新转写，时间序）。 */
   segments: TranscriptSegment[];
   failedChunks: number;
+  /** 失败原因采样（≤5 条，异常 message 原文；空数组 = 无失败）。 */
+  failureSamples: string[];
   requests: number;
   droppedByGuard: number;
   cacheHit: boolean;
@@ -57,11 +59,14 @@ async function runChunks(
   chunks: Array<[number, number]>,
   provider: 'openai_verbose' | 'openai_basic' | 'local_cli',
   options: AsrRunOptions,
-): Promise<{ outcomes: ChunkOutcome[]; failed: number; requests: number; verboseRejected: boolean }> {
+): Promise<{ outcomes: ChunkOutcome[]; failed: number; requests: number; verboseRejected: boolean; failureSamples: string[] }> {
   const outcomes: ChunkOutcome[] = [];
   let failed = 0;
   let requests = 0;
   let verboseRejected = false;
+  // 失败原因采样（≤5 条）：块失败此前零诊断（failedChunks 只有计数），
+  // 网络错/HTTP 错/切片错无从归因。保异常 message 原文，供遥测透出。
+  const failureSamples: string[] = [];
   const maxInFlight = Math.max(1, options.settings.maxConcurrency);
   let cursor = 0;
   const workers: Promise<void>[] = [];
@@ -100,14 +105,17 @@ async function runChunks(
           raw = await transcribeLocalCli(input, { settings: options.settings, signal: options.signal }, options.tempDir);
         }
         outcomes.push({ range, raw, anchorStartMs: range[0] });
-      } catch {
+      } catch (error) {
         failed++;
+        if (failureSamples.length < 5) {
+          failureSamples.push(error instanceof Error ? error.message : String(error));
+        }
       }
     }
   };
   for (let i = 0; i < Math.min(maxInFlight, chunks.length); i++) workers.push(runOne());
   await Promise.all(workers);
-  return { outcomes, failed, requests, verboseRejected };
+  return { outcomes, failed, requests, verboseRejected, failureSamples };
 }
 
 /** 相对毫秒 → 绝对 PTS 毫秒（clamp 到块区间）。 */
@@ -146,6 +154,7 @@ export async function transcribeWindow(
       return {
         segments: cached,
         failedChunks: 0,
+        failureSamples: [],
         requests: 0,
         droppedByGuard: 0,
         cacheHit,
@@ -183,6 +192,7 @@ export async function transcribeWindow(
     return {
       segments: merged.length > 0 ? merged : segments,
       failedChunks: result.failed,
+      failureSamples: result.failureSamples,
       requests: result.requests,
       droppedByGuard,
       cacheHit,
@@ -208,6 +218,7 @@ export async function transcribeWindow(
   return {
     segments,
     failedChunks: result.failed,
+    failureSamples: result.failureSamples,
     requests: result.requests,
     droppedByGuard,
     cacheHit: false,

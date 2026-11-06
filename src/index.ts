@@ -52,21 +52,21 @@ export const DEFAULT_MAX_REQUEST_BYTES = 56 * 1024 * 1024;
 
 export const Config = Schema.object({
   renderVisualId: Schema.boolean().default(true).description('渲染超像素微型反色角标'),
-  maxPacketsPerCall: Schema.number().default(20).description('单次调用画布包数上限（与宿主单条消息 20 图上限对齐，保证每包都有画布）'),
-  maxFramesPerCall: Schema.number().default(128).description('确定性抽帧单次目标帧数上限（frame_count 受此钳制）'),
-  maxImagesPerCall: Schema.number().default(20).description('单次调用回传图像上限（宿主单条消息图像上限 20）'),
-  maxTokensBudgetPerCall: Schema.number().default(65536).description('单次调用视觉 Token 预算上限（intent.max_tokens_budget 受此钳制）'),
-  maxWallClockMsPerCall: Schema.number().default(720_000).description('单次调用解码推进墙钟上限（毫秒；720000 默认，超长窗口到点即停防客户端超时）'),
-  maxRequestBytes: Schema.number().default(DEFAULT_MAX_REQUEST_BYTES).description('请求字节软水位'),
-  maxColdRefs: Schema.number().default(4).description('冷区引用数量上限'),
+  maxPacketsPerCall: Schema.number().min(1).default(20).description('单次调用画布包数上限（与宿主单条消息 20 图上限对齐，保证每包都有画布）'),
+  maxFramesPerCall: Schema.number().min(1).default(128).description('确定性抽帧单次目标帧数上限（frame_count 受此钳制）'),
+  maxImagesPerCall: Schema.number().min(1).default(20).description('单次调用回传图像上限（宿主单条消息图像上限 20）'),
+  maxTokensBudgetPerCall: Schema.number().min(274).default(65536).description('单次调用视觉 Token 预算上限（intent.max_tokens_budget 受此钳制）'),
+  maxWallClockMsPerCall: Schema.number().min(1000).default(720_000).description('单次调用解码推进墙钟上限（毫秒；720000 默认，超长窗口到点即停防客户端超时）'),
+  maxRequestBytes: Schema.number().min(1024).default(DEFAULT_MAX_REQUEST_BYTES).description('请求字节软水位'),
+  maxColdRefs: Schema.number().min(0).default(4).description('冷区引用数量上限'),
   telemetryEnabled: Schema.boolean().default(true).description('遥测开关'),
   ffmpegPath: Schema.string().description('ffmpeg 可执行文件路径（缺省自动探测）'),
   ffprobePath: Schema.string().description('ffprobe 可执行文件路径（缺省自动探测）'),
   tempDir: Schema.string().description('临时目录（缺省系统临时目录）'),
   contentHashFallback: Schema.boolean().default(false).description('内容哈希降级轨开关'),
-  defaultStreamWindowMs: Schema.number().default(10000).description('流式窗口缺省长度（毫秒）'),
-  streamWorkMaxEdge: Schema.number().default(2048).description('流式解码工作分辨率长边上限'),
-  epochCompactionWindow: Schema.number().default(6).description('热转冷批量收敛窗口（包数）'),
+  defaultStreamWindowMs: Schema.number().min(1000).default(10000).description('流式窗口缺省长度（毫秒）'),
+  streamWorkMaxEdge: Schema.number().min(0).default(2048).description('流式解码工作分辨率长边上限'),
+  epochCompactionWindow: Schema.number().min(1).default(6).description('热转冷批量收敛窗口（包数）'),
   audio: Schema.object({
     mode: Schema.string().default('auto').description('音频侧车模式（off 关闭）'),
     extractSubtitles: Schema.boolean().default(true).description('优先提取字幕作为台词源'),
@@ -216,6 +216,9 @@ export function buildToolDefinition(_deps: {
   runtime?: HostRuntime | undefined;
 }) {
   const { config } = _deps;
+  // 包数上限与回传图像上限对齐：预检与确定性路由按包数放行，而回传图像按
+  // maxImagesPerCall 截尾保留——包数 > 图像上限时必有包无画布（模型侧静默盲区）。
+  const maxPacketsEffective = Math.min(config.maxPacketsPerCall, config.maxImagesPerCall);
   const bins = resolveBinPaths({ ffmpegPath: config.ffmpegPath, ffprobePath: config.ffprobePath });
   const attachments = resolveAttachments(_deps.ctx);
   const audioSettings = (intent: IntentDirective | undefined): AudioSettings =>
@@ -240,6 +243,7 @@ export function buildToolDefinition(_deps: {
       maxRequestBytes: config.maxRequestBytes,
       maxTokensPerImage: config.meteringProfile.maxTokensPerImage,
       maxTokensBudget: intent.max_tokens_budget ?? config.maxTokensBudgetPerCall,
+      maxPackets: maxPacketsEffective,
       signal,
     });
   const stream: StreamFn = (videoPath, probeResult, intent, sessionId, signal) =>
@@ -249,7 +253,7 @@ export function buildToolDefinition(_deps: {
       renderVisualId: config.renderVisualId,
       defaultStreamWindowMs: config.defaultStreamWindowMs,
       streamWorkMaxEdge: config.streamWorkMaxEdge,
-      maxPacketsPerCall: config.maxPacketsPerCall,
+      maxPacketsPerCall: maxPacketsEffective,
       maxTokensBudgetPerCall: config.maxTokensBudgetPerCall,
       maxWallClockMsPerCall: config.maxWallClockMsPerCall,
       maxRequestBytes: config.maxRequestBytes,
@@ -292,7 +296,7 @@ export function buildToolDefinition(_deps: {
               .catch(() => null),
         },
         limits: {
-          maxPackets: config.maxPacketsPerCall,
+          maxPackets: maxPacketsEffective,
           maxTokensBudget: config.maxTokensBudgetPerCall,
           maxFrames: config.maxFramesPerCall,
         },

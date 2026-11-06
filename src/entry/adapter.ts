@@ -108,6 +108,15 @@ export function adaptCallArgs(
     if (!Array.isArray(tsRaw) || tsRaw.length < 1) {
       throw new PfStreamError('PFSTREAM_ARGS_TIMESTAMPS', 'timestamps_ms 必须为非空数组');
     }
+    // 长度上限与 frame_count 的 maxFrames 钳制同源（规格《五》§1.3 上限钳制）：
+    // 时间戳是模型点名的显式点位清单，静默截断会丢失指定时刻——故超限报错
+    // 而非钳制（与 frame_count 的"概览意图，钳制保留意图"语义分型）。
+    if (tsRaw.length > limits.maxFrames) {
+      throw new PfStreamError(
+        'PFSTREAM_ARGS_TIMESTAMPS',
+        `timestamps_ms 数量 ${tsRaw.length} 超过单次上限 ${limits.maxFrames}（maxFrames），请分段调用`,
+      );
+    }
     if (intent.action == null) intent.action = 'timestamps';
     intent.timestamps_ms = tsRaw.map((t) => clampMs(t, limits.lastPtsMs));
   }

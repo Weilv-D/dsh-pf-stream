@@ -6,7 +6,11 @@
  * D_hist ≥ 0.35 → 场景硬切；D_hist < 0.35 → 极速甩镜（维持/切入 MOTION）。
  */
 
-export const SWITCH_BLOCK_THRESHOLD = 0.3;
+/**
+ * 硬切候选分块判据常量的单一事实源在 stage1/perceive.ts（候选计数的执行点）；
+ * 此处 re-export 保持判据常量的既有导出位置（规格《三》§2 文档引用）。
+ */
+export { SWITCH_BLOCK_THRESHOLD } from '../stage1/perceive.js';
 export const SWITCH_MIN_BLOCKS = 26;
 export const SWITCH_HIST_L1 = 0.35;
 

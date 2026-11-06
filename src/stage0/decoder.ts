@@ -22,10 +22,30 @@ export interface DecodePointOptions {
   ffprobePath?: string | undefined;
   displayWidth: number;
   displayHeight: number;
+  /** 主视频流序（probe.videoStreamIndex）：解码与 ffprobe 索引必须同流。 */
+  videoStreamIndex?: number | undefined;
   signal?: AbortSignal | undefined;
 }
 
 export type DecodePointFn = typeof decodePoint;
+
+/** 单点定点解码 argv（纯函数，供单测直接覆盖流选择）。 */
+export function pointArgv(videoPath: string, ptsMs: number, videoOrdinal: number): string[] {
+  return [
+    '-hide_banner',
+    '-loglevel', 'error',
+    '-ss', (ptsMs / 1000).toFixed(3),
+    '-i', videoPath,
+    // 流选择显式化：ffprobe 索引按 v:N 取帧，而 ffmpeg 缺省选流按分辨率优先——
+    // 封面流分辨率高于主视频或多真实视频流文件时两者会分歧，PTS/几何随之错乱。
+    '-map', `0:v:${videoOrdinal}`,
+    '-frames:v', '1',
+    '-an', '-sn', '-dn',
+    '-f', 'rawvideo',
+    '-pix_fmt', 'rgb24',
+    'pipe:1',
+  ];
+}
 
 /** 单点定点解码。返回 null 表示该 PTS 无帧输出（空帧）。 */
 export async function decodePoint(
@@ -33,18 +53,7 @@ export async function decodePoint(
   ptsMs: number,
   options: DecodePointOptions,
 ): Promise<RgbImage | null> {
-  const sec = (ptsMs / 1000).toFixed(3);
-  const argv = [
-    '-hide_banner',
-    '-loglevel', 'error',
-    '-ss', sec,
-    '-i', videoPath,
-    '-frames:v', '1',
-    '-an', '-sn', '-dn',
-    '-f', 'rawvideo',
-    '-pix_fmt', 'rgb24',
-    'pipe:1',
-  ];
+  const argv = pointArgv(videoPath, ptsMs, options.videoStreamIndex ?? 0);
   const { stdout } = await execFile(options.ffmpegPath, argv, {
     signal: options.signal,
     encoding: 'buffer',
@@ -132,11 +141,13 @@ function rangeOutputGeometry(options: RangeDecodeOptions): {
   return { outW, outH, vf };
 }
 
-function rangeArgv(
+/** 区间解码 argv（纯函数，供单测直接覆盖流选择）。 */
+export function rangeArgv(
   videoPath: string,
   window0Ms: number,
   window1Ms: number,
   geometry: { outW: number; outH: number; vf: string[] },
+  videoOrdinal: number,
 ): string[] {
   const durationSec = ((window1Ms - window0Ms) / 1000 + 1.0).toFixed(3);
   return [
@@ -144,6 +155,9 @@ function rangeArgv(
     '-loglevel', 'error',
     '-ss', (window0Ms / 1000).toFixed(3),
     '-i', videoPath,
+    // 流选择显式化：ffprobe 索引按 v:N 取帧，而 ffmpeg 缺省选流按分辨率优先——
+    // 封面流分辨率高于主视频或多真实视频流文件时两者会分歧，PTS/几何随之错乱。
+    '-map', `0:v:${videoOrdinal}`,
     '-t', durationSec,
     '-an', '-sn', '-dn',
     '-fps_mode', 'passthrough',
@@ -174,7 +188,7 @@ export async function decodeRangeStreaming(
   const index = await probePtsIndexExec(options, videoPath, window0Ms, window1Ms);
   if (index.length === 0) return { frameCount: 0, realigned: 0 };
   const geometry = rangeOutputGeometry(options);
-  const argv = rangeArgv(videoPath, window0Ms, window1Ms, geometry);
+  const argv = rangeArgv(videoPath, window0Ms, window1Ms, geometry, options.videoStreamIndex ?? 0);
   const frameBytes = geometry.outW * geometry.outH * 3;
 
   const child = spawn(options.ffmpegPath, argv, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });

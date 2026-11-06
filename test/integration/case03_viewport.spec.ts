@@ -23,6 +23,7 @@ function inspect(name: string, intent: Record<string, unknown>) {
       packetIdStart: 1,
       globalIdStart: 1,
       appliedIntentId: 'intent_1',
+      maxPackets: 20,
     }),
   );
 }

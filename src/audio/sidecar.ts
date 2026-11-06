@@ -245,6 +245,7 @@ export async function runAudioSidecar(
           requests: result.requests,
           droppedByGuard: result.droppedByGuard,
           costMs: Date.now() - startedAt,
+          failureSamples: result.failureSamples.length > 0 ? result.failureSamples : undefined,
         },
       },
       segments: result.segments,

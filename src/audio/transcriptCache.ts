@@ -159,6 +159,10 @@ export function mergeInterval(
  * 多区间拼接后区间内独立编号必然冲突（≥2 缓存区间命中同一窗口时归属错乱）。
  * 前置条件：intervals 按 startMs 有序（mergeInterval 的输出不变量），
  * 区间内 segments 亦按 startMs 有序。就地修改并返回入参。
+ *
+ * 跨调用注意（设计取舍，非缺陷）："全局唯一 + 时序单调"两条不变量在回溯
+ * 插入下不可兼得——后补转写更早窗口时，先前调用已返回的 segId 会整体平移
+ * （前向流式追加场景无漂移）。跨调用引用台词段请以时间戳为准，勿锚定 segId。
  */
 export function renumberSegmentsGlobally(intervals: TranscriptInterval[]): TranscriptInterval[] {
   let seq = 0;

@@ -54,6 +54,7 @@ describe('case 4 — 计费公式与画布几何', () => {
         packetIdStart: 1,
         globalIdStart: 1,
         appliedIntentId: 'intent_1',
+        maxPackets: 20,
       },
     );
     expect(result.packets).toHaveLength(1);
@@ -175,6 +176,7 @@ describe('case 4 — 打包器逐位一致性与字节幂等', () => {
       packetIdStart: 1,
       globalIdStart: 1,
       appliedIntentId: 'intent_1',
+      maxPackets: 20,
     } as const;
     // balanced uniform 500ms → FORM_1（530）逐包发出；预算 274 时首包即超限 → 空结果
     const tight = await runDeterministicInspection(

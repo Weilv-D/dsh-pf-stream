@@ -143,6 +143,8 @@ export interface AudioContextSummary {
     requests: number;
     droppedByGuard: number;
     costMs: number;
+    /** ASR 块失败原因采样（≤5 条异常 message 原文；缺省 = 无失败或未走 ASR 路径）。 */
+    failureSamples?: string[] | undefined;
   };
 }
 

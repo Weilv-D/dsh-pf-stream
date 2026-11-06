@@ -32,6 +32,12 @@ export interface RouterOptions {
   maxTokensPerImage?: number | undefined;
   /** 单次调用视觉 Token 预算（意图层 max_tokens_budget，规格《五》§1.3；缺省不校验）。 */
   maxTokensBudget?: number | undefined;
+  /**
+   * 单次调用包数上限（意图层 max_packets 缺省时的兜底）。缺省会静默放行任意
+   * 包数，而回传图像按 maxImagesPerCall 截尾保留，靠前的包将无画布（模型
+   * 以为看全了实际盲区在头部）——必须与宿主 20 图上限对齐。
+   */
+  maxPackets: number;
   signal?: AbortSignal | undefined;
 }
 
@@ -196,6 +202,14 @@ export async function runDeterministicInspection(
 
   // 按块推进：每块 ≤CHUNK_TARGETS 个目标，块内帧打包后即释放，内存有界
   let spanIdx = 0;
+  // 包数上限（intent.max_packets 优先，缺省 options.maxPackets）：与预算/字节门同语义——
+  // 即将超限的本包不发出，剩余时间轴跨度以提示行如实告知；缺省上限对齐宿主
+  // 20 图上限（maxImagesPerCall），否则回传图像截尾保留后靠前的包将无画布。
+  const packetCap = intent.max_packets ?? options.maxPackets;
+  // 停止原因旗标：预算门与包数门互斥触发（同一次 break 只会命中其一），
+  // 截断语义对模型不可见（packets/hintLines 只含保留部分），必须补提示行。
+  let stoppedByBudget = false;
+  let stoppedByPackets = false;
   while (spanIdx < spans.length) {
     const chunk: Span[] = [];
     let used = 0;
@@ -294,13 +308,16 @@ export async function runDeterministicInspection(
       const cost = billTokens(artifact.packet.canvasSize[0], artifact.packet.canvasSize[1]);
       const budget = options.maxTokensBudget ?? intent.max_tokens_budget;
       if (budget !== undefined && usedTokens + cost > budget) {
+        stoppedByBudget = true;
         spanIdx = spans.length;
         break;
       }
       usedTokens += cost;
       packets.push(artifact);
       hintLines.push(timelineHintLine(artifact.packet, intent.roi_hint ?? null));
-      if (intent.max_packets != null && packets.length >= intent.max_packets) {
+      if (packets.length >= packetCap) {
+        // 包数上限停止：剩余时间轴跨度不再解码/打包，尾部以提示行如实告知
+        stoppedByPackets = true;
         spanIdx = spans.length;
         break;
       }
@@ -319,6 +336,20 @@ export async function runDeterministicInspection(
       hintLines.pop();
       total -= encodedSizeOf(last.imageBytes);
     }
+  }
+
+  // 停止原因提示行：插在字节水位截断之后（不参与 1:1 同步弹出），
+  // 确保截断事实对模型可见。包数/预算停止互斥。
+  if (stoppedByPackets) {
+    hintLines.push(
+      `已达单次调用包数上限（本次输出 ${packets.length} 包，时间轴尾部未采样）；` +
+        '请缩小 pts_window 或分批调用以查看其余内容。',
+    );
+  } else if (stoppedByBudget) {
+    hintLines.push(
+      `已达 max_tokens_budget 预算（本次输出 ${packets.length} 包，时间轴尾部未采样）；` +
+        '请缩小 pts_window 或分批调用以查看其余内容。',
+    );
   }
 
   return { packets, hintLines, sampledPtsMs: dedupeSorted(sampled) };

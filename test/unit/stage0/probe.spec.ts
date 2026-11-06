@@ -135,6 +135,7 @@ describe('case 2 — 末尾 duration 避让（e2e + 纯函数）', () => {
         packetIdStart: 1,
         globalIdStart: 1,
         appliedIntentId: 'intent_1',
+        maxPackets: 20,
       },
     );
     expect(result.sampledPtsMs).toEqual([probe.lastPtsMs]);

@@ -31,6 +31,13 @@ const FLIP_PIXEL_THRESHOLD = 0.02;
 const FLIP_MIN_PIXELS = 16;
 const TOP_K = 3;
 
+/**
+ * 硬切候选分块判据（规格《三》§2）：δ_raw > 0.30 或 δ > 0.30 计入候选。
+ * 单一事实源在本模块（候选计数的执行点）；switchDetector 以 re-export 保持
+ * 判据常量的既有导出位置（其 classifySceneChange 只消费候选数，不消费本值）。
+ */
+export const SWITCH_BLOCK_THRESHOLD = 0.3;
+
 /** 分块网格坐标。 */
 export function blockGridPos(k: number): { row: number; col: number } {
   return { row: Math.floor(k / GRID_COLS), col: k % GRID_COLS };
@@ -173,7 +180,7 @@ export function perceiveFrame(
         weight: weights[k]!,
         sobelMean: blockSobel[k]!,
       });
-      if (deltaRaw > 0.3 || deltaNorm > 0.3) switchCandidateBlocks++;
+      if (deltaRaw > SWITCH_BLOCK_THRESHOLD || deltaNorm > SWITCH_BLOCK_THRESHOLD) switchCandidateBlocks++;
     }
   }
 

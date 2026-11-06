@@ -61,7 +61,8 @@ export function stripEmoji(text: string): string {
       /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu,
       ' ',
     )
-    .replace(/ {2,}/g, ' ')
+    // \s 覆盖全角空格（U+3000）与制表/换行——emoji 剥离后遗留的成对空白一并收拢
+    .replace(/\s{2,}/gu, ' ')
     .trim();
 }
 
