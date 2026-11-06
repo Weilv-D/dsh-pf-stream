@@ -60,18 +60,19 @@ export interface PtsIndexEntry {
   ptsMs: number;
 }
 
-/** 窗口帧 PTS 索引（ffprobe -show_frames，VFR 安全）。 */
+/** 窗口帧 PTS 索引（ffprobe -show_frames，VFR 安全）。videoOrdinal 为主视频流序（probe.videoStreamIndex）。 */
 export async function probePtsIndex(
   ffprobePath: string,
   videoPath: string,
   window0Ms: number,
   window1Ms: number,
+  videoOrdinal = 0,
   signal?: AbortSignal | undefined,
 ): Promise<PtsIndexEntry[]> {
   const interval = `${(window0Ms / 1000).toFixed(3)}%${(window1Ms / 1000).toFixed(3)}`;
   const argv = [
     '-v', 'error',
-    '-select_streams', 'v:0',
+    '-select_streams', `v:${videoOrdinal}`,
     '-read_intervals', interval,
     '-show_entries', 'frame=pts_time',
     '-of', 'json',
@@ -94,6 +95,8 @@ export async function probePtsIndex(
 
 export interface RangeDecodeOptions extends DecodePointOptions {
   workMaxEdge?: number | undefined;
+  /** 主视频流序（probe.videoStreamIndex；封面流存在时 v:0 是封面，必须显式指定）。 */
+  videoStreamIndex?: number | undefined;
   /** 每次 ffmpeg 解码进程启动时回调（argv 快照），供单遍解码断言计数。 */
   onFfmpegSpawn?: ((argv: string[]) => void) | undefined;
 }
@@ -107,7 +110,7 @@ async function probePtsIndexExec(
   // ffprobe 显式配置优先；缺省时按与 ffmpeg 同目录约定派生
   const ffprobe = options.ffprobePath
     ?? options.ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
-  return probePtsIndex(ffprobe, videoPath, w0, w1, options.signal);
+  return probePtsIndex(ffprobe, videoPath, w0, w1, options.videoStreamIndex ?? 0, options.signal);
 }
 
 /** 区间解码输出几何（workMaxEdge 等比上限）。 */
@@ -234,6 +237,9 @@ export async function decodeRangeStreaming(
   } catch (error) {
     killed = true;
     child.kill();
+    // 等待退出事件落定再抛（exited 可能因 spawn 'error' 而拒绝，吞掉以保留原始错误），
+    // 避免进程退出途中抛出造成无人接住的拒绝。
+    await exited.catch(() => undefined);
     throw error;
   } finally {
     clearInterval(stallTimer);
@@ -252,7 +258,9 @@ export async function decodeRangeStreaming(
       `解码连续 ${STALL_TIMEOUT_MS}ms 无帧推进，已终止（可能为损坏媒体或解码器阻塞）`,
     );
   }
-  if (code !== 0 && !killed && realigned === 0) {
+  if (code !== 0 && !killed) {
+    // 非零退出码代表真实失败（损坏流/参数错），即使已消费 realigned 裕量帧也如实报错：
+    // 静默吞掉会把截短的窗口伪装成正常完成。
     const stderrTail = Buffer.concat(stderrChunks)
       .subarray(Math.max(0, stderrBytes - 2048))
       .toString('utf8');

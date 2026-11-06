@@ -53,7 +53,6 @@ export function createSessionState(sessionId: string): SessionState {
     globalUnitSeq: 0,
     packetSeq: 0,
     intentSeq: 0,
-    ctrlSeq: new Map(),
     heartbeatSeq: 0,
   };
 }
@@ -158,7 +157,6 @@ interface SnapshotDoc {
   packetSeq: number;
   intentSeq: number;
   heartbeatSeq: number;
-  ctrlSeq: Array<[string, number]>;
   fUnitCache: Array<{
     anchorFId: number;
     packetId: number;
@@ -227,7 +225,6 @@ export function exportSessionSnapshot(state: SessionState): string {
     packetSeq: state.packetSeq,
     intentSeq: state.intentSeq,
     heartbeatSeq: state.heartbeatSeq,
-    ctrlSeq: [...state.ctrlSeq.entries()],
     fUnitCache: [...state.fUnitCache.values()].map((e) => ({
       anchorFId: e.anchorFId,
       packetId: e.packetId,
@@ -253,7 +250,6 @@ export function importSessionSnapshot(json: string): SessionState {
   state.packetSeq = doc.packetSeq;
   state.intentSeq = doc.intentSeq;
   state.heartbeatSeq = doc.heartbeatSeq;
-  state.ctrlSeq = new Map(doc.ctrlSeq);
   state.fUnitCache = new Map(
     doc.fUnitCache.map((e) => [
       e.anchorFId,

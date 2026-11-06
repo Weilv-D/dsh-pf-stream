@@ -34,6 +34,13 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 function clampRoi(roi: RoiHint): RoiHint {
+  // 非有限值拒绝（对照 clampMs 的 isFinite 守卫）：NaN/Infinity 透传到视窗
+  // 计算会得到 NaN 几何 → 静默全灰帧，错误远在下游且不可归因。
+  for (const v of [roi.x, roi.y, roi.w, roi.h] as const) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      throw new PfStreamError('PFSTREAM_ARGS_ROI', `roi_hint 字段必须为有限数值：${String(v)}`);
+    }
+  }
   const x = Math.min(Math.max(roi.x, 0), 1);
   const y = Math.min(Math.max(roi.y, 0), 1);
   const w = Math.min(Math.max(roi.w, 1e-9), 1 - x);

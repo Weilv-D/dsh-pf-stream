@@ -51,13 +51,18 @@ export async function findExternalSubtitle(videoPath: string): Promise<string | 
   }
   const candidates: CandidateFile[] = [];
   for (const entry of entries) {
-    const m = new RegExp(`^${escapeRegExp(base)}(?:\\.([\\w-]+))?\\.(srt|vtt|ass|ssa)$`, 'i').exec(entry);
+    // 允许多个点分段（movie.zh.en.srt）：最后一段为扩展名，倒数第二段为语言标记
+    const m = new RegExp(`^${escapeRegExp(base)}((?:\\.[\\w-]+)*)\\.(srt|vtt|ass|ssa)$`, 'i').exec(entry);
     if (!m) continue;
     const ext = (m[2] ?? '').toLowerCase();
     if (!SUBTITLE_EXTS.has(ext)) continue;
+    const segs = (m[1] ?? '')
+      .split('.')
+      .filter((s) => s.length > 0);
+    const lang = segs.length > 0 ? segs[segs.length - 1] : undefined;
     candidates.push({
       file: path.join(dir, entry),
-      langRank: m[1] ? languageRank(m[1]) : 2,
+      langRank: lang !== undefined ? languageRank(lang) : 2,
       index: candidates.length,
     });
   }
@@ -65,6 +70,25 @@ export async function findExternalSubtitle(videoPath: string): Promise<string | 
   if (first === undefined) return null;
   candidates.sort((a, b) => a.langRank - b.langRank || a.index - b.index);
   return candidates[0] === undefined ? null : candidates[0].file;
+}
+
+/**
+ * 字幕文件解码：优先严格 UTF-8；失败（GBK 等本地编码字幕常见）时尝试
+ * ICU 提供的中日韩编码，均不可用则退回有损 UTF-8（乱码优于整段丢弃）。
+ */
+export function decodeSubtitleText(buf: Buffer): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch {
+    for (const encoding of ['gb18030', 'big5']) {
+      try {
+        return new TextDecoder(encoding).decode(buf);
+      } catch {
+        // 该 Node 构建未携带对应编码（small-icu）：继续尝试
+      }
+    }
+    return buf.toString('utf8');
+  }
 }
 
 function escapeRegExp(s: string): string {
@@ -205,8 +229,11 @@ export function parseSubtitleFile(content: string, ext: string, source: AudioSou
 }
 
 function languageOfExternal(file: string): string | null {
-  const m = /\.([\w-]+)\.(srt|vtt|ass|ssa)$/i.exec(file);
-  return m !== null ? (m[1] ?? null) : null;
+  const m = /((?:\.[\w-]+)+)\.(srt|vtt|ass|ssa)$/i.exec(file);
+  if (m === null) return null;
+  // 多语言段（movie.zh.en.srt）取最后一段作语言标记，与 findExternalSubtitle 一致
+  const segs = (m[1] ?? '').split('.').filter((s) => s.length > 0);
+  return segs.length > 0 ? (segs[segs.length - 1] ?? null) : null;
 }
 
 /**
@@ -219,7 +246,8 @@ export async function loadSubtitleTimeline(
 ): Promise<SubtitleTimeline> {
   const external = await findExternalSubtitle(videoPath);
   if (external) {
-    const content = await readFile(external, 'utf8');
+    // 读原始字节自行解码：readFile('utf8') 对 GBK 字幕会产生 U+FFFD 替换串
+    const content = decodeSubtitleText(await readFile(external));
     const segments = parseSubtitleFile(content, path.extname(external).slice(1), 'external_subtitle');
     if (segments.length > 0) {
       return { status: 'external_subtitle', language: languageOfExternal(external), segments };

@@ -165,6 +165,7 @@ export async function runDeterministicInspection(
     ffprobePath: options.ffprobePath,
     displayWidth: probe.displayWidth,
     displayHeight: probe.displayHeight,
+    videoStreamIndex: probe.videoStreamIndex,
     signal: options.signal,
   };
 

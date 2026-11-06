@@ -1,12 +1,11 @@
 /**
  * Stage 2 —— 硬切（SWITCH）与极速甩镜解耦（规格《三》§2）。
  *
- * H_switch = 0.10 为固定常量，与动态调节的 H_high_eff 解耦；
+ * 硬切判据不依赖动态阈值 H_high_eff（解耦由“块占比 + δ 绝对值”保证）：
  * ≥ 26 块（> 80%）满足 δ_raw > 0.30 或 δ > 0.30 时进入直方图判据：
  * D_hist ≥ 0.35 → 场景硬切；D_hist < 0.35 → 极速甩镜（维持/切入 MOTION）。
  */
 
-export const H_SWITCH = 0.1;
 export const SWITCH_BLOCK_THRESHOLD = 0.3;
 export const SWITCH_MIN_BLOCKS = 26;
 export const SWITCH_HIST_L1 = 0.35;

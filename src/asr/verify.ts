@@ -51,7 +51,7 @@ function runCaptured(
   command: string,
   args: string[],
   timeoutMs: number,
-): Promise<{ code: number | null; stderr: string; spawnError: Error | null }> {
+): Promise<{ code: number | null; stderr: string; spawnError: Error | null; timedOut: boolean }> {
   return new Promise((resolve) => {
     let stderr = '';
     let settled = false;
@@ -60,7 +60,7 @@ function runCaptured(
       if (settled) return;
       settled = true;
       child.kill();
-      resolve({ code: null, stderr: '验证超时', spawnError: null });
+      resolve({ code: null, stderr: '', spawnError: null, timedOut: true });
     }, timeoutMs);
     child.stderr?.on('data', (chunk: Buffer) => {
       if (stderr.length < 4000) stderr += chunk.toString('utf8');
@@ -69,13 +69,13 @@ function runCaptured(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ code: null, stderr: '', spawnError: error });
+      resolve({ code: null, stderr: '', spawnError: error, timedOut: false });
     });
     child.on('exit', (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ code, stderr, spawnError: null });
+      resolve({ code, stderr, spawnError: null, timedOut: false });
     });
   });
 }
@@ -107,6 +107,15 @@ export async function verifyLocal(settings: AsrSettings, timeoutMs = 60_000): Pr
         latencyMs,
         text: null,
         message: `无法启动：${result.spawnError.message}`,
+      };
+    }
+    if (result.timedOut) {
+      return {
+        ok: false,
+        kind: 'local',
+        latencyMs,
+        text: null,
+        message: `验证超时（超过 ${timeoutMs}ms）；本地引擎首次运行需要加载模型，可在高级配置调大 timeoutMs`,
       };
     }
     if (result.code !== 0) {

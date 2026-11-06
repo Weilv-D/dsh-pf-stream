@@ -240,6 +240,21 @@ export async function runStreamPass(
     // 无 F 且不足 4P：本包不成立。不清理任何待发/擂台状态，等下一次触发。
     if (pCount === 0 && !fUnit) return;
 
+    // 形态由 pCount 与 fUnit 唯一决定（此刻 units 尚未构建，长度即 pCount）。
+    let form: 'FORM_1_STANDARD_STRIP' | 'FORM_2_COMPACT_4P' | 'FORM_3_COMPACT_1F' | 'FORM_4_PARTIAL_STRIP';
+    if (trigger === 'SWITCH_STATIC') form = 'FORM_3_COMPACT_1F';
+    else if (!fUnit) form = 'FORM_2_COMPACT_4P';
+    else if (pCount >= 4) form = 'FORM_1_STANDARD_STRIP';
+    else if (pCount >= 1) form = 'FORM_4_PARTIAL_STRIP';
+    else form = 'FORM_3_COMPACT_1F';
+    // 预算/包数前置门（与确定性通道同语义，规格《五》§1.3）：即将超限的包
+    // 不组包、不消耗全局序号、不清空待发单元，直接以 budget_* 停止本次推进。
+    // 后置门在包已计入 tokensUsed 后才停止，超预算单包还要靠 precheck 截断序
+    // 静默丢弃（先发后弃）；前置门保证本通道产出的每个包都在预算内。
+    const cost = form === 'FORM_1_STANDARD_STRIP' || form === 'FORM_4_PARTIAL_STRIP' ? 530 : 274;
+    if (packets.length >= options.maxPackets) throw new StopIteration('budget_packets');
+    if (rt.tokensUsed + cost > options.maxTokensBudget) throw new StopIteration('budget_tokens');
+
     const units: UnitInput[] = [];
     for (const p of rt.pendingP.splice(0, pCount)) {
       counters.globalUnitSeq++;
@@ -253,13 +268,6 @@ export async function runStreamPass(
       });
     }
 
-    let form: 'FORM_1_STANDARD_STRIP' | 'FORM_2_COMPACT_4P' | 'FORM_3_COMPACT_1F' | 'FORM_4_PARTIAL_STRIP';
-    if (trigger === 'SWITCH_STATIC') form = 'FORM_3_COMPACT_1F';
-    else if (!fUnit) form = 'FORM_2_COMPACT_4P';
-    else if (units.length >= 4) form = 'FORM_1_STANDARD_STRIP';
-    else if (units.length >= 1) form = 'FORM_4_PARTIAL_STRIP';
-    else form = 'FORM_3_COMPACT_1F';
-
     if (fUnit) {
       counters.globalUnitSeq++;
       units.push({
@@ -272,31 +280,31 @@ export async function runStreamPass(
       });
     }
 
-    if (trigger === 'SETTLE') rt.pendingF = null;
-    if (trigger === 'PEAK_FULL' && withF) rt.motionArena = null;
-    if (trigger === 'PEAK_TIMEOUT') {
-      rt.motionArena = null;
-      rt.settleArena = null;
-    }
-    if (trigger === 'SWITCH_STATIC') rt.fSwitchImage = null;
+      if (trigger === 'SETTLE') rt.pendingF = null;
+      if (trigger === 'PEAK_FULL' && withF) rt.motionArena = null;
+      if (trigger === 'PEAK_TIMEOUT') {
+        rt.motionArena = null;
+        rt.settleArena = null;
+      }
+      if (trigger === 'SWITCH_STATIC') rt.fSwitchImage = null;
 
-    counters.packetSeq++;
-    const artifact = packCanvas(form, units, {
-      packetId: counters.packetSeq,
-      appliedIntentId: options.appliedIntentId,
-      appliedCtrlId: ctrl.activeCtrlIds(),
-      renderVisualId: options.renderVisualId,
-      triggerPath: trigger,
-    });
-    packets.push(artifact);
-    hintLines.push(timelineHintLine(artifact.packet, sessionIntent.roiHint ?? null));
-    if (fUnit) {
-      rt.lastFEmittedPtsMs = fUnit.ptsMs;
-      rt.sumDtSinceF = 0;
-    }
-    rt.tokensUsed += form === 'FORM_1_STANDARD_STRIP' || form === 'FORM_4_PARTIAL_STRIP' ? 530 : 274;
-    packMs += performance.now() - t0;
-  };
+      counters.packetSeq++;
+      const artifact = packCanvas(form, units, {
+        packetId: counters.packetSeq,
+        appliedIntentId: options.appliedIntentId,
+        appliedCtrlId: ctrl.activeCtrlIds(),
+        renderVisualId: options.renderVisualId,
+        triggerPath: trigger,
+      });
+      packets.push(artifact);
+      hintLines.push(timelineHintLine(artifact.packet, sessionIntent.roiHint ?? null));
+      if (fUnit) {
+        rt.lastFEmittedPtsMs = fUnit.ptsMs;
+        rt.sumDtSinceF = 0;
+      }
+      rt.tokensUsed += cost;
+      packMs += performance.now() - t0;
+    };
 
   const capture = (frame: RgbImage, ptsMs: number, slot: 'P' | 'F', dLocal: number, topK: number[]): CapturedUnit => {
     let roi: RoiHint | null = sessionIntent.roiHint ?? null;
@@ -344,6 +352,7 @@ export async function runStreamPass(
         displayWidth: probe.displayWidth,
         displayHeight: probe.displayHeight,
         workMaxEdge: options.streamWorkMaxEdge,
+        videoStreamIndex: probe.videoStreamIndex,
         onFfmpegSpawn: (argv) => ffmpegSpawns.push(argv.slice()),
         signal: options.signal,
       },
@@ -548,12 +557,6 @@ export async function runStreamPass(
         if (arenaHeld > arenaMaxHeld) arenaMaxHeld = arenaHeld;
         perceiveMs += performance.now() - t0;
         lastPtsOfWindow = ptsMs;
-
-        // ---- 预算停止（意图层上限）----
-        if (packets.length >= options.maxPackets) throw new StopIteration('budget_packets');
-        // 按可能发出的最贵下一包（FORM_1/FORM_4 = 530）预留，保证本通道不超预算；
-        // 按最便宜（274）预留会在 FORM_1 时最多超 256 Token。
-        if (rt.tokensUsed + 530 > options.maxTokensBudget) throw new StopIteration('budget_tokens');
       },
     );
     ptsRealign = result.realigned;
@@ -623,6 +626,9 @@ function restoreRuntime(cursor: StreamCursor): RuntimeState {
       image: { width: 336, height: 336, data: p.image336 },
       sourceCropBbox: p.sourceCropBbox,
     })),
+    // 擂台/pendingF 为 672 单槽位图像，不随游标持久化（跨窗口边界可能丢擂台、
+    // 出无 F 的 FORM_2 包；取图像内存占用与快照体积的折中）。
+    // sumDtSinceF 为标量，持久化以保 assistFocus 判定的跨窗口连续性。
     motionArena: null,
     settleArena: null,
     pendingF: null,
@@ -631,7 +637,7 @@ function restoreRuntime(cursor: StreamCursor): RuntimeState {
     motionEnteredAtPtsMs: s.motionEnteredAtPtsMs ?? null,
     lastFEmittedPtsMs: cursor.lastEmittedPacketPtsMs,
     lastHeartbeatPtsMs: s.lastHeartbeatPtsMs ?? null,
-    sumDtSinceF: 0,
+    sumDtSinceF: s.sumDtSinceFMs ?? 0,
     assistFiredIslandEnd: null,
     tokensUsed: 0,
   };
@@ -647,6 +653,7 @@ function buildCursor(rt: RuntimeState, cursor: StreamCursor, lastPts: number, ct
     rhoHistory: rt.clarity.rhoHistory.slice(-3),
     motionEnteredAtPtsMs: rt.motionEnteredAtPtsMs,
     lastHeartbeatPtsMs: rt.lastHeartbeatPtsMs,
+    sumDtSinceFMs: rt.sumDtSinceF,
     ctrl: ctrl.snapshot(),
   };
   const pendingPUnits: PendingPUnit[] = rt.pendingP.map((p) => ({

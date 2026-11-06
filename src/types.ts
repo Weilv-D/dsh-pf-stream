@@ -28,6 +28,8 @@ export interface ProbeResult {
   lastPtsMs: number;
   avgFps: number;
   codec: string;
+  /** 主视频流在视频流序列中的序号（ffprobe -select_streams v:N 的 N；封面流跳过后计数）。 */
+  videoStreamIndex: number;
   audioStreams: Array<{ index: number; codec: string; channels?: number }>;
   subtitleStreams: Array<{ index: number; codec: string; language?: string }>;
 }
@@ -260,6 +262,8 @@ export interface StateMachineSnapshot {
   rhoHistory?: number[];
   motionEnteredAtPtsMs?: number | null;
   lastHeartbeatPtsMs?: number | null;
+  /** 自上一张 F 以来的 Σd_t（assistFocus 判定输入；跨窗口累计）。 */
+  sumDtSinceFMs?: number;
   /** 自闭环控制器状态（M3 起填充）。 */
   ctrl?: ControllerSnapshot;
 }
@@ -328,7 +332,6 @@ export interface SessionState {
   globalUnitSeq: number;
   packetSeq: number;
   intentSeq: number;
-  ctrlSeq: Map<string, number>;
   heartbeatSeq: number;
 }
 

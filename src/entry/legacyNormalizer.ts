@@ -27,18 +27,26 @@ export function toMs(value: number | string, durationMs: number): number {
 /**
  * ROI 归一化：归一化坐标直接钳制 [0,1]；像素坐标（任一分量 >1）
  * 按显示宽高换算为归一化坐标（规格《五》§1.1 crop/bbox/roi 规则）。
+ * 非有限分量按 0 处理（静默全灰帧的 NaN 面在此截断；标准 intent.roi_hint
+ * 的严格拒绝在 adapter.clampRoi）。
  */
 function normalizeRoi(
   raw: { x: number; y: number; w: number; h: number },
   displayWidth: number,
   displayHeight: number,
 ): RoiHint {
+  const finiteOrZero = (v: unknown): number =>
+    typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  const x0 = finiteOrZero(raw.x);
+  const y0 = finiteOrZero(raw.y);
+  const w0 = finiteOrZero(raw.w);
+  const h0 = finiteOrZero(raw.h);
   const clamp01 = (v: number) => Math.min(Math.max(v, 0), 1);
-  const pixelMode = raw.x > 1 || raw.y > 1 || raw.w > 1 || raw.h > 1;
-  const x = pixelMode ? raw.x / displayWidth : raw.x;
-  const y = pixelMode ? raw.y / displayHeight : raw.y;
-  const w = pixelMode ? raw.w / displayWidth : raw.w;
-  const h = pixelMode ? raw.h / displayHeight : raw.h;
+  const pixelMode = x0 > 1 || y0 > 1 || w0 > 1 || h0 > 1;
+  const x = pixelMode ? x0 / displayWidth : x0;
+  const y = pixelMode ? y0 / displayHeight : y0;
+  const w = pixelMode ? w0 / displayWidth : w0;
+  const h = pixelMode ? h0 / displayHeight : h0;
   return {
     x: clamp01(x),
     y: clamp01(y),

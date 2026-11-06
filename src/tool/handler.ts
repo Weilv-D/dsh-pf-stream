@@ -40,6 +40,13 @@ export function resolveSessionId(exec: ToolExec | undefined): string | undefined
 
 export type ToolResult = Record<string, unknown>;
 
+/**
+ * probe 全片字幕导航的段数上限：字幕无 Token 计量，超长视频全量回传会
+ * 撑爆工具结果文本块；按时间序保留前 500 段（正常对话密度 ≈ 40 分钟），
+ * 超出部分以 truncatedSegments 计数告知，细节走 pf_stream 分段获取。
+ */
+const MAX_PROBE_SUBTITLE_SEGMENTS = 500;
+
 /** 宿主图像内容块引用的 JSON 投影（只含宿主 schema 允许的字段）。 */
 export interface AttachedImage {
   attachmentId: string;
@@ -146,14 +153,19 @@ export async function handleToolCall(
     if (settings?.extractSubtitles) {
       const timeline = await deps.audio!.subtitlesFor(args.video_path, probeResult, exec?.signal);
       if (timeline) {
+        const sorted = [...timeline.segments].sort((a, b) => a.startMs - b.startMs);
+        const segments = sorted.slice(0, MAX_PROBE_SUBTITLE_SEGMENTS);
         result.subtitles = {
           source: timeline.status,
           language: timeline.language,
-          segments: timeline.segments.map((s) => ({
+          segments: segments.map((s) => ({
             startMs: s.startMs,
             endMs: s.endMs,
             text: s.text,
           })),
+          ...(sorted.length > segments.length
+            ? { truncatedSegments: sorted.length - segments.length }
+            : {}),
         };
       }
     }
@@ -191,6 +203,12 @@ export async function handleToolCall(
       hintLines.push(
         '未生成转写文本：该视频没有字幕，且未配置转写引擎。' +
           '可在左侧栏「插件」→「视频理解」中下载本地转写模型（约 190 MB），或配置云端服务商密钥。',
+      );
+    }
+    if (stream.telemetry.stopReason === 'budget_tokens') {
+      hintLines.push(
+        `已达 max_tokens_budget 预算（本次发出 ${stream.packets.length} 包），本次推进提前停止；` +
+          '已消费窗口不会回放，下次调用将从当前游标继续；需要更多内容时提高 max_tokens_budget 后重新调用。',
       );
     }
     return {

@@ -80,6 +80,7 @@ interface DownloadResult {
 /**
  * 逐 URL 尝试下载到 dest；dest.part 保留已下载字节，支持 Range 续传。
  * 404/网络错误自动换下一个源；用户取消立即抛出 AbortError。
+ * 续传镜像间字节一致（HF 与 hf-mirror 服务同一文件），跨源续传安全。
  */
 async function downloadFirst(
   urls: readonly string[],
@@ -90,57 +91,71 @@ async function downloadFirst(
   const part = `${dest}${PART_SUFFIX}`;
   const failures: string[] = [];
   for (const url of urls) {
-    let start = fileSize(part);
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        redirect: 'follow',
-        headers: start > 0 ? { range: `bytes=${start}-` } : {},
-        signal,
+    // 最多两轮：首轮带 Range 续传；416（续传起点越界，.part 与远端文件不匹配）
+    // 时删除 .part 从头重下本源一次——不能把 416 当作“已完整”：
+    // 远端文件被替换变小时，陈旧 .part 拼上会得到坏文件落位。
+    for (let round = 0; round < 2; round += 1) {
+      const start = round === 0 ? fileSize(part) : 0;
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          redirect: 'follow',
+          headers: start > 0 ? { range: `bytes=${start}-` } : {},
+          signal,
+        });
+      } catch (error) {
+        if (signal.aborted) throw error;
+        failures.push(`${url}: ${(error as Error).message}`);
+        break;
+      }
+      if (response.status === 416) {
+        if (round === 0) {
+          try {
+            rmSync(part, { force: true });
+          } catch {
+            // 删除失败也继续走第二轮（从零覆盖写）
+          }
+          continue;
+        }
+        failures.push(`${url}: HTTP 416（从头重下后仍越界）`);
+        break;
+      }
+      if (!response.ok) {
+        failures.push(`${url}: HTTP ${response.status}`);
+        break;
+      }
+      const resumed = start > 0 && response.status === 206;
+      const offset = resumed ? start : 0;
+      const lengthHeader = response.headers.get('content-length');
+      const incoming = lengthHeader === null ? 0 : Number(lengthHeader) || 0;
+      const total = offset + incoming > 0 ? offset + incoming : null;
+      if (response.body === null) {
+        failures.push(`${url}: 响应没有内容`);
+        break;
+      }
+      mkdirSync(join(dest, '..'), { recursive: true });
+      const sink = createWriteStream(part, { flags: resumed ? 'a' : 'w' });
+      let received = offset;
+      const source = Readable.fromWeb(
+        response.body as unknown as import('node:stream/web').ReadableStream<Uint8Array>,
+      );
+      source.on('data', (chunk: Buffer) => {
+        received += chunk.length;
+        onProgress(received, total);
       });
-    } catch (error) {
-      if (signal.aborted) throw error;
-      failures.push(`${url}: ${(error as Error).message}`);
-      continue;
+      try {
+        await pipeline(source, sink, { signal });
+      } catch (error) {
+        if (signal.aborted) throw error;
+        failures.push(`${url}: ${(error as Error).message}`);
+        break;
+      }
+      if (total !== null && received < total) {
+        failures.push(`${url}: 连接提前结束（${received}/${total} 字节）`);
+        break;
+      }
+      return { url, bytes: received };
     }
-    if (response.status === 416) {
-      // 续传位置已到文件末尾：视为完成。
-      return { url, bytes: start };
-    }
-    if (!response.ok) {
-      failures.push(`${url}: HTTP ${response.status}`);
-      continue;
-    }
-    if (start > 0 && response.status !== 206) start = 0;
-    const lengthHeader = response.headers.get('content-length');
-    const incoming = lengthHeader === null ? 0 : Number(lengthHeader) || 0;
-    const total = start + incoming > 0 ? start + incoming : null;
-    if (response.body === null) {
-      failures.push(`${url}: 响应没有内容`);
-      continue;
-    }
-    mkdirSync(join(dest, '..'), { recursive: true });
-    const sink = createWriteStream(part, { flags: start > 0 ? 'a' : 'w' });
-    let received = start;
-    const source = Readable.fromWeb(
-      response.body as unknown as import('node:stream/web').ReadableStream<Uint8Array>,
-    );
-    source.on('data', (chunk: Buffer) => {
-      received += chunk.length;
-      onProgress(received, total);
-    });
-    try {
-      await pipeline(source, sink, { signal });
-    } catch (error) {
-      if (signal.aborted) throw error;
-      failures.push(`${url}: ${(error as Error).message}`);
-      continue;
-    }
-    if (total !== null && received < total) {
-      failures.push(`${url}: 连接提前结束（${received}/${total} 字节）`);
-      continue;
-    }
-    return { url, bytes: received };
   }
   throw new Error(`下载失败，已尝试 ${urls.length} 个源：\n${failures.join('\n')}`);
 }
@@ -181,6 +196,11 @@ function findExecutable(dir: string, names: readonly string[], depth = 3): strin
   return null;
 }
 
+/** PowerShell 单引号字面量转义（' → ''）。 */
+function psQuote(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
 async function extractZip(archive: string, dest: string, signal: AbortSignal): Promise<void> {
   mkdirSync(dest, { recursive: true });
   try {
@@ -190,10 +210,16 @@ async function extractZip(archive: string, dest: string, signal: AbortSignal): P
     if (signal.aborted) throw error;
     if (process.platform !== 'win32') throw error;
   }
-  // Windows 老版本没有 bsdtar：退回 PowerShell。
+  // Windows 老版本没有 bsdtar：退回 PowerShell。路径经 psQuote 转义，
+  // 含撇号的用户目录（O'Brien 等）不会截断命令串。
   await run(
     'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath '${archive}' -DestinationPath '${dest}' -Force`],
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `Expand-Archive -LiteralPath ${psQuote(archive)} -DestinationPath ${psQuote(dest)} -Force`,
+    ],
     signal,
   );
 }

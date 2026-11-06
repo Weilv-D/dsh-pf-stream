@@ -27,10 +27,10 @@ One primary tool `dsh-pf-stream`, routed by `intent.action`:
 | `interval_ms` | number | Slice interval for `uniform` mode (ms); must be positive |
 | `frame_count` | number | Target frame count for `uniform` mode; clamped by `maxFramesPerCall` |
 | `max_packets` | number | Canvas packet limit for this call; clamped by `maxPacketsPerCall` |
-| `max_tokens_budget` | number | Vision token budget for this call (≥274); clamped by `maxTokensBudgetPerCall` |
+| `max_tokens_budget` | number | Vision token budget for this call (≥274); clamped by `maxTokensBudgetPerCall`; stops early with a hint line when the next packet would exceed it |
 | `audio.mode` | `auto` \| `off` | Audio channel switch for this call; default `auto` |
 | `audio.language` | string | Transcription language hint (for example `zh`); default auto-detect |
-| `audio.extract_subtitles` | boolean | Whether this probe extracts subtitles; default follows config |
+| `audio.extract_subtitles` | boolean | Whether this probe extracts subtitles (500 segments max; a `truncatedSegments` count is attached beyond that); default follows config |
 | `audio.assist_focus` | boolean | Whether this call enables speech-assisted focus; default follows config |
 | `reset` | boolean | Reset session intent to defaults first, then merge this call's fields |
 
@@ -38,11 +38,11 @@ One primary tool `dsh-pf-stream`, routed by `intent.action`:
 
 ## Top-level convenience fields
 
-The argument top level accepts 9 common video-inspection fields; the entry adapter normalizes them into the standard `intent` shape:
+The argument top level accepts 11 common video-inspection fields; the entry adapter normalizes them into the standard `intent` shape:
 
-`start_time`, `end_time`, `time_range`, `timestamps`, `fps`, `interval`, `num_frames`, `crop`, `probe_only`.
+`start_time`, `end_time`, `time_range`, `timestamps`, `fps`, `interval`, `num_frames`, `crop`, `bbox`, `roi`, `probe_only`.
 
-Time fields accept seconds or milliseconds (auto-detected); `crop` accepts normalized or pixel coordinates (pixels convert by display size).
+Time fields accept seconds or milliseconds (auto-detected); `crop`, `bbox`, and `roi` are equivalent and accept normalized or pixel coordinates (pixels convert by display size).
 
 ## Call examples
 
@@ -101,7 +101,7 @@ Each call returns one text block plus image content blocks:
 
 Three levels, in order; the first success wins:
 
-1. **Subtitles**: a sidecar file next to the video (`demo.mp4` → `demo.zh.srt` / `demo.srt`, Chinese preferred, then English), or an embedded soft subtitle track.
+1. **Subtitles**: a sidecar file next to the video (`demo.mp4` → `demo.zh.srt` / `demo.srt`; multi-tag names like `demo.zh.en.srt` also match, Chinese preferred, then English), or an embedded soft subtitle track. Files decode as UTF-8, with GBK and Big5 fallback detection.
 2. **Speech transcription**: with no subtitles, an acoustic VAD runs first (silence short-circuits, so no cost), then the configured engine transcribes.
 3. **No speech**: returns `no_audio` instead of failing.
 
@@ -211,7 +211,7 @@ Local transcription is timed per chunk; raise `audio.asr.local.timeoutMs` (and `
 
 | Prefix | Meaning |
 | --- | --- |
-| `PFSTREAM_ARGS_*` | Argument validation failures (`VIDEO_PATH` / `ACTION` / `MODE` / `FOCUS` / `WINDOW` / `TIMESTAMPS` / `INTERVAL` / `FRAME_COUNT` / `PTS`) |
+| `PFSTREAM_ARGS_*` | Argument validation failures (`VIDEO_PATH` / `ACTION` / `MODE` / `FOCUS` / `WINDOW` / `TIMESTAMPS` / `INTERVAL` / `FRAME_COUNT` / `PTS` / `ROI`) |
 | `PFSTREAM_PROBE_NOT_FOUND` | Video path missing or not a regular file |
 | `PFSTREAM_PROBE_NO_VIDEO` | No video stream in the container |
 | `PFSTREAM_PROBE_FAILED` | Media probing failed (includes damaged containers) |
@@ -219,6 +219,7 @@ Local transcription is timed per chunk; raise `audio.asr.local.timeoutMs` (and `
 | `PFSTREAM_EXEC_NONZERO` | Subprocess exited non-zero (stderr tail attached) |
 | `PFSTREAM_EXEC_ABORT` | Caller cancelled |
 | `PFSTREAM_EXEC_TIMEOUT` | Subprocess timed out |
+| `PFSTREAM_EXEC_OUTPUT_TRUNCATED` | Subprocess stdout exceeded the 64 MiB cap and was truncated |
 | `PFSTREAM_DECODE_EMPTY` | No decodable frame at the target time (including exhausted fallbacks after end avoidance) |
 | `PFSTREAM_DECODE_STALL` | No frame progress for 30 s; decode terminated |
 | `PFSTREAM_UNIFORM_PARAMS_MISSING` | `uniform` lacks both `interval_ms` and `frame_count` |

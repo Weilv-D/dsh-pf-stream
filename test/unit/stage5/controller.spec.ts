@@ -132,8 +132,35 @@ describe('StreamController R4 硬切快速定格', () => {
     const c2 = new StreamController(baselines());
     c2.onSwitch(1000);
     c2.onFrameStepped(1033, 0, 0, 'STATIC');
+    expect(c2.live.TSettleEff).toBe(80); // 距切换仅 33ms，不得恢复
     c2.onFrameStepped(1233, 0, 0, 'STATIC'); // 路径②：满 200ms
     expect(c2.live.TSettleEff).toBe(200);
+  });
+
+  it('回归：切换前静止 ≥T_settle_base 也不在切换帧当场恢复（计时起点对齐切换时刻）', () => {
+    const c = new StreamController(baselines());
+    // 预切静止 500ms（> T_settle_base=200）：旧实现的 stateSincePtsMs 停留在 0，
+    // 切换帧 ptsMs-0 ≥ 200 → 当场恢复，快定格失效
+    c.onFrameStepped(0, 0, 0, 'STATIC');
+    c.onFrameStepped(500, 0, 0, 'STATIC');
+    c.onSwitch(533);
+    expect(c.live.TSettleEff).toBe(80);
+    c.onFrameStepped(566, 0, 0, 'STATIC'); // 距切换 33ms
+    expect(c.live.TSettleEff).toBe(80);
+    c.onFrameStepped(766, 0, 0, 'STATIC'); // 距切换 233ms ≥ 200ms
+    expect(c.live.TSettleEff).toBe(200);
+  });
+
+  it('切换前 MOTION → SWITCH：迁移分支照常退场 R1/R2 并重置计时', () => {
+    const c = new StreamController(baselines());
+    feed(c, 32, { d: 0.11 }); // R1 激活（MOTION 慢速）
+    expect(c.activeSlugs()).toContain('slow_sparsify');
+    c.onSwitch(1100); // 切换前 lastState='MOTION'
+    c.onFrameStepped(1133, 0, 0, 'STATIC'); // 迁移分支：退场 R1 + 计时重置
+    expect(c.activeSlugs()).not.toContain('slow_sparsify');
+    expect(c.live.TSettleEff).toBe(80); // R4 仍生效（距切换 33ms）
+    c.onFrameStepped(1366, 0, 0, 'STATIC'); // 距切换 233ms
+    expect(c.live.TSettleEff).toBe(200);
   });
 });
 

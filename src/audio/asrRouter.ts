@@ -19,6 +19,7 @@ import {
   engineFingerprint,
   mergeInterval,
   missingRanges,
+  renumberSegmentsGlobally,
   videoFingerprint,
   type TranscriptInterval,
 } from './transcriptCache.js';
@@ -152,7 +153,7 @@ export async function transcribeWindow(
       };
     }
 
-    const chunks = planChunksFor(gaps, vad);
+    const chunks = planChunksFor(gaps, vad, options.settings.provider);
     const result = await runChunks(videoPath, chunks, options.settings.provider, options);
     let segments: TranscriptSegment[] = [];
     let droppedByGuard = 0;
@@ -162,7 +163,8 @@ export async function transcribeWindow(
       droppedByGuard += guarded.dropped;
       segments = segments.concat(guarded.segments);
     }
-    // 缓存记录锚定后的段（清洗前锚定，清洗后回写）——以清洗后为准，保证幂等
+    // 缓存记录锚定并清洗后的段（保证幂等）；segId 区间内先占位，
+    // 全部区间合并完成后统一全局重编号再落盘与拼接
     for (const outcome of result.outcomes.sort((a, b) => a.anchorStartMs - b.anchorStartMs)) {
       const guarded = guardSegments(anchor(outcome), vad);
       if (guarded.segments.length > 0 || outcome.range[1] > outcome.range[0]) {
@@ -174,6 +176,7 @@ export async function transcribeWindow(
         });
       }
     }
+    renumberSegmentsGlobally(intervals);
     await writeTranscriptCache(options.cacheDir, fingerprint, intervals).catch(() => undefined);
 
     const merged = cachedSegmentsFor(intervals, window);
@@ -187,8 +190,9 @@ export async function transcribeWindow(
     };
   }
 
-  // 无缓存路径：整窗直转
-  const chunks = planChunksFor([window], vad);
+  // 无缓存路径：整窗直转。anchor 的 segId 为占位 0，
+  // 输出前按时间序全局重编号（mountSegments 以 segId 作段身份键）。
+  const chunks = planChunksFor([window], vad, options.settings.provider);
   const result = await runChunks(videoPath, chunks, options.settings.provider, options);
   let segments: TranscriptSegment[] = [];
   let droppedByGuard = 0;
@@ -197,6 +201,10 @@ export async function transcribeWindow(
     droppedByGuard += guarded.dropped;
     segments = segments.concat(guarded.segments);
   }
+  segments.sort((a, b) => a.startMs - b.startMs);
+  segments.forEach((s, i) => {
+    s.segId = i + 1;
+  });
   return {
     segments,
     failedChunks: result.failed,
@@ -207,36 +215,19 @@ export async function transcribeWindow(
   };
 }
 
-function planChunksFor(ranges: Array<[number, number]>, vad: VadResult | null): Array<[number, number]> {
+function planChunksFor(
+  ranges: Array<[number, number]>,
+  vad: VadResult | null,
+  provider: AsrSettings['provider'],
+): Array<[number, number]> {
+  // 无时间戳 provider（openai_basic）按语音岛直切（视听融合设计 A3）：
+  // basic 整块文本只能按块区间锚定，岛切掉静音段可同时减少
+  // 静音区幻觉输入与无效计费字节。verbose/local_cli 有段级时间戳，走谷底切分。
   const out: Array<[number, number]> = [];
   for (const range of ranges) {
-    out.push(...planChunks(range, vad));
+    out.push(
+      ...(provider === 'openai_basic' ? planIslandChunks(range, vad) : planChunks(range, vad)),
+    );
   }
   return out;
-}
-
-/** basic/无时间戳 provider 的岛切分包装。 */
-export async function transcribeWindowByIslands(
-  videoPath: string,
-  window: [number, number],
-  vad: VadResult | null,
-  options: AsrRunOptions,
-): Promise<AsrRunResult> {
-  const islands = planIslandChunks(window, vad);
-  const result = await runChunks(videoPath, islands, options.settings.provider, options);
-  let segments: TranscriptSegment[] = [];
-  let droppedByGuard = 0;
-  for (const outcome of result.outcomes.sort((a, b) => a.anchorStartMs - b.anchorStartMs)) {
-    const guarded = guardSegments(anchor(outcome), vad);
-    droppedByGuard += guarded.dropped;
-    segments = segments.concat(guarded.segments);
-  }
-  return {
-    segments,
-    failedChunks: result.failed,
-    requests: result.requests,
-    droppedByGuard,
-    cacheHit: false,
-    degradedToBasic: false,
-  };
 }

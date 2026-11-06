@@ -13,7 +13,8 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { AsrSettings, TranscriptSegment } from './types.js';
 
-const CACHE_VERSION = 2;
+// v2：区间内独立编号（多区间拼接后 segId 冲突）；v3：全文档全局编号。
+const CACHE_VERSION = 3;
 
 export interface TranscriptInterval {
   startMs: number;
@@ -150,4 +151,22 @@ export function mergeInterval(
     }
   }
   return out;
+}
+
+/**
+ * 全文档段全局重编号：segId 在整份缓存内唯一且随时间序单调递增。
+ * mountSegments 以 segId 作为段身份键（owner 归属、(cont.) 副本判定），
+ * 多区间拼接后区间内独立编号必然冲突（≥2 缓存区间命中同一窗口时归属错乱）。
+ * 前置条件：intervals 按 startMs 有序（mergeInterval 的输出不变量），
+ * 区间内 segments 亦按 startMs 有序。就地修改并返回入参。
+ */
+export function renumberSegmentsGlobally(intervals: TranscriptInterval[]): TranscriptInterval[] {
+  let seq = 0;
+  for (const it of intervals) {
+    for (const seg of it.segments) {
+      seq += 1;
+      seg.segId = seq;
+    }
+  }
+  return intervals;
 }

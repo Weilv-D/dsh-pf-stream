@@ -73,6 +73,13 @@ export class StreamController {
     this.r4Active = true;
     this.live.TSettleEff = clamp(R4_SETTLE_MS, T_SETTLE_RANGE);
     this.ctrlId.r4 = this.nextId('r4', ptsMs);
+    // 切换前已处于 STATIC 时，恢复路径②的计时起点必须重置到切换时刻：
+    // 状态机 SWITCH 原子步进当帧仍处于 STATIC（lastState 不变，走 else 分支），
+    // 若沿用切换前起点，预切静止 ≥T_settle_base 会在切换帧当场恢复，
+    // 80ms 快定格在主流硬切场景（静止段间硬切）确定性失效。
+    // 来自 MOTION/SETTLE 的切换不受影响：onFrameStepped 的迁移分支会以
+    // 切换帧重置 lastState/stateSincePtsMs（并正确触发 R1/R2 退场）。
+    if (this.lastState === 'STATIC') this.stateSincePtsMs = ptsMs;
   }
 
   /**

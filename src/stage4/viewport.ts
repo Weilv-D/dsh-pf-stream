@@ -142,12 +142,25 @@ function planSquareViewport(input: ViewportInput, slot: number, shortSide: numbe
 function planInscribeViewport(input: ViewportInput, slot: number): ViewportPlan {
   const { displayWidth: w, displayHeight: h } = input;
   const budget = slot * slot;
+  // 面积项恒不小于槽位内接项（短边一侧 slot/short ≤ sqrt(budget/(w·h)) 可证），
+  // 保留以显式表达面积预算语义。
   const k = Math.min(slot / w, slot / h, Math.sqrt(budget / (w * h)));
-  let targetW = Math.min(quant42Round(w * k), slot);
-  let targetH = Math.min(quant42Round(h * k), slot);
-  // 短边硬约束（软面积预算让位）
-  if (targetW < MIN_SHORT_SIDE) targetW = Math.min(MIN_SHORT_SIDE, quant42Floor(slot));
-  if (targetH < MIN_SHORT_SIDE) targetH = Math.min(MIN_SHORT_SIDE, quant42Floor(slot));
+  // 量化后至少保留 1 个超像素（极端宽高比下 quant42Round 可能取 0）
+  let targetW = Math.min(Math.max(quant42Round(w * k), SUPERPIXEL), slot);
+  let targetH = Math.min(Math.max(quant42Round(h * k), SUPERPIXEL), slot);
+  // 短边硬约束：仅当等比放大短边到 84 后长边仍不越槽位时才放大；
+  // 极端宽高比（如 100×2000）等比放大必然越界——保持等比（短边 <84 但
+  // 无畸变）优于拉伸畸变，分辨率损失由 42 网格量化下限承担。
+  const shortSide = Math.min(targetW, targetH);
+  if (shortSide < MIN_SHORT_SIDE) {
+    const scale = MIN_SHORT_SIDE / shortSide;
+    const scaledW = quant42Round(targetW * scale);
+    const scaledH = quant42Round(targetH * scale);
+    if (scaledW <= slot && scaledH <= slot) {
+      targetW = scaledW;
+      targetH = scaledH;
+    }
+  }
   // 内接居中，偏置对齐 42 网格
   const offsetX = quant42Floor((slot - targetW) / 2);
   const offsetY = quant42Floor((slot - targetH) / 2);

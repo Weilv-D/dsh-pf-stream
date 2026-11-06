@@ -23,6 +23,7 @@ const PROBE: ProbeResult = {
   lastPtsMs: 3966.67,
   avgFps: 30,
   codec: 'h264',
+  videoStreamIndex: 0,
   audioStreams: [],
   subtitleStreams: [],
 };
@@ -61,6 +62,37 @@ describe('normalizeLegacyArgs：像素坐标 ROI 按显示宽高换算', () => {
       { width: 640, height: 360 },
     );
     expect(intent.roi_hint).toEqual({ x: 0.1, y: 0.2, w: 0.3, h: 0.4 });
+  });
+  it('bbox 与 crop 等价；非有限分量按 0 处理（不产生 NaN 几何）', () => {
+    const { intent: byBbox } = normalizeLegacyArgs(
+      { bbox: { x: 160, y: 90, w: 320, h: 180 } },
+      PROBE.durationMs,
+      { width: 640, height: 360 },
+    );
+    expect(byBbox.roi_hint).toEqual({ x: 0.25, y: 0.25, w: 0.5, h: 0.5 });
+    const { intent: withNaN } = normalizeLegacyArgs(
+      { crop: { x: Number.NaN, y: 90, w: 320, h: 180 } },
+      PROBE.durationMs,
+      { width: 640, height: 360 },
+    );
+    expect(withNaN.roi_hint).toEqual({ x: 0, y: 0.25, w: 0.5, h: 0.5 });
+  });
+});
+
+describe('adaptCallArgs：roi_hint 非有限值拒绝', () => {
+  it('NaN/Infinity 分量抛 PFSTREAM_ARGS_ROI（对照 clampMs 的 isFinite 守卫）', () => {
+    for (const bad of [
+      { x: Number.NaN, y: 0, w: 0.5, h: 0.5 },
+      { x: 0, y: Number.POSITIVE_INFINITY, w: 0.5, h: 0.5 },
+      { x: 0, y: 0, w: '0.5' as unknown as number, h: 0.5 },
+    ]) {
+      try {
+        adaptCallArgs({ video_path: 'v.mp4', intent: { roi_hint: bad } }, LIMITS);
+        expect.unreachable('应当抛出 PFSTREAM_ARGS_ROI');
+      } catch (error) {
+        expect((error as { code?: string }).code).toBe('PFSTREAM_ARGS_ROI');
+      }
+    }
   });
 });
 

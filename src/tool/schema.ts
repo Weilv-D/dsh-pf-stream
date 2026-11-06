@@ -75,7 +75,7 @@ export const intentValueSchema: ValueSchema = {
       properties: {
         mode: { type: 'string', enum: ['auto', 'off'], description: 'off 关闭音频侧车' },
         language: { type: 'string', description: 'ASR 语言提示（如 zh、en）' },
-        extract_subtitles: { type: 'boolean', description: 'probe 返回全片字幕导航' },
+        extract_subtitles: { type: 'boolean', description: 'probe 返回全片字幕导航（最多 500 段，超出附 truncatedSegments）' },
         assist_focus: { type: 'boolean', description: '语音停顿引导额外 F 定格' },
       },
       additionalProperties: false,
@@ -94,6 +94,8 @@ export const legacyValueSchemas: Record<string, ValueSchema> = {
   interval: { type: 'number', description: '均匀抽帧间隔（秒或毫秒，触发 uniform 检视）' },
   num_frames: { type: 'number', description: '均匀抽帧目标总帧数（触发 uniform 检视）' },
   crop: { type: 'object', description: '局部区域（归一化或像素坐标，归一化为 intent.roi_hint）' },
+  bbox: { type: 'object', description: '局部区域（等价 crop，归一化或像素坐标）' },
+  roi: { type: 'object', description: '局部区域（等价 crop，归一化或像素坐标）' },
   probe_only: { type: 'boolean', description: '仅探测视频元数据（等价 action="probe"）' },
 };
 

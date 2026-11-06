@@ -29,6 +29,7 @@ export interface FfprobeJson {
     duration?: string;
     channels?: number;
     tags?: Record<string, string>;
+    disposition?: { attached_pic?: number } | undefined;
     side_data_list?: Array<{ side_data_type?: string; rotation?: number }>;
   }>;
   format?: {
@@ -65,13 +66,18 @@ export function extractRotation(stream: NonNullable<FfprobeJson['streams']>[numb
 
 /**
  * 由 ffprobe JSON 构造 ProbeResult（纯函数，供单测直接覆盖 tags.rotate 等合成输入）。
+ * 视频流选择：跳过封面流（disposition.attached_pic=1，MP4 内嵌封面等），
+ * 取首个真实视频流；全部为封面流时退回首轨（仅含封面的文件仍可探测元数据）。
  * duration 优先级：format.duration > 视频流 duration > format.tags.DURATION。
  */
 export function buildProbeResult(raw: FfprobeJson): ProbeResult {
-  const video = raw.streams?.find((stream) => stream.codec_type === 'video');
-  if (!video) {
+  const videoStreams = (raw.streams ?? []).filter((stream) => stream.codec_type === 'video');
+  if (videoStreams.length === 0) {
     throw new PfStreamError('PFSTREAM_PROBE_NO_VIDEO', '容器内不存在视频流');
   }
+  const mainIdx = videoStreams.findIndex((stream) => (stream.disposition?.attached_pic ?? 0) === 1 ? false : true);
+  const videoOrdinal = mainIdx === -1 ? 0 : mainIdx;
+  const video = videoStreams[videoOrdinal]!;
 
   const codedWidth = video.width ?? 0;
   const codedHeight = video.height ?? 0;
@@ -114,6 +120,7 @@ export function buildProbeResult(raw: FfprobeJson): ProbeResult {
     lastPtsMs: estimateLastPtsMs(durationMs, avgFps),
     avgFps,
     codec: video.codec_name ?? 'unknown',
+    videoStreamIndex: videoOrdinal,
     audioStreams,
     subtitleStreams,
   };
@@ -124,40 +131,47 @@ interface FrameProbeJson {
 }
 
 /**
- * 末帧 PTS 逐帧探测：只读容器尾段（0.6s 起读窗口 + 5s 余量）。
- * 返回末帧 pts_time 毫秒；无帧输出或探测失败返回 null（调用方回退估算路径）。
+ * 末帧 PTS 逐帧探测：durationMs 已知时只读容器尾段（0.6s 起读窗口 + 5s 余量）；
+ * duration 三源全缺（=0）时退到百分比读窗（依赖解复用器内部时长，仍失败返回 null）。
+ * 只探测主视频流（v:N，封面流跳过）。无帧输出或探测失败返回 null（调用方回退估算路径）。
  */
 async function probeLastFramePtsMs(
   options: ProbeVideoOptions,
   durationMs: number,
   videoPath: string,
+  videoOrdinal: number,
 ): Promise<number | null> {
-  const startSec = Math.max(0, (durationMs - 600) / 1000);
-  const argv = [
-    '-v', 'error',
-    '-select_streams', 'v:0',
-    '-show_frames',
-    '-show_entries', 'frame=pts_time',
-    '-of', 'json',
-    '-read_intervals', `${startSec.toFixed(3)}%+5`,
-    '-i', videoPath,
-  ];
-  let parsed: FrameProbeJson;
-  try {
-    const { stdout } = await execFile(options.ffprobePath, argv, {
-      timeoutMs: PROBE_TIMEOUT_MS,
-      signal: options.signal,
-    });
-    parsed = JSON.parse(stdout as string) as FrameProbeJson;
-  } catch {
-    return null;
-  }
-  const frames = parsed.frames ?? [];
-  for (let i = frames.length - 1; i >= 0; i -= 1) {
-    const ptsTime = frames[i]?.pts_time;
-    if (ptsTime !== undefined) {
-      const ms = secondsToMs(ptsTime);
-      if (ms >= 0) return clamp(ms, 0, Math.max(durationMs, ms));
+  const intervals =
+    durationMs > 0
+      ? [`${Math.max(0, (durationMs - 600) / 1000).toFixed(3)}%+5`]
+      : ['95%+30'];
+  for (const interval of intervals) {
+    const argv = [
+      '-v', 'error',
+      '-select_streams', `v:${videoOrdinal}`,
+      '-show_frames',
+      '-show_entries', 'frame=pts_time',
+      '-of', 'json',
+      '-read_intervals', interval,
+      '-i', videoPath,
+    ];
+    let parsed: FrameProbeJson;
+    try {
+      const { stdout } = await execFile(options.ffprobePath, argv, {
+        timeoutMs: PROBE_TIMEOUT_MS,
+        signal: options.signal,
+      });
+      parsed = JSON.parse(stdout as string) as FrameProbeJson;
+    } catch {
+      continue;
+    }
+    const frames = parsed.frames ?? [];
+    for (let i = frames.length - 1; i >= 0; i -= 1) {
+      const ptsTime = frames[i]?.pts_time;
+      if (ptsTime !== undefined) {
+        const ms = secondsToMs(ptsTime);
+        if (ms >= 0) return clamp(ms, 0, Math.max(durationMs, ms));
+      }
     }
   }
   return null;
@@ -188,7 +202,15 @@ export async function probeVideo(videoPath: string, options: ProbeVideoOptions):
   }
 
   const result = buildProbeResult(raw);
-  const lastFramePtsMs = await probeLastFramePtsMs(options, result.durationMs, videoPath);
+  const lastFramePtsMs = await probeLastFramePtsMs(
+    options,
+    result.durationMs,
+    videoPath,
+    result.videoStreamIndex,
+  );
   if (lastFramePtsMs !== null) result.lastPtsMs = lastFramePtsMs;
+  // duration 三源全缺（=0）但逐帧探测拿到了末帧：以末帧 PTS 兜底时长。
+  // 否则 estimateLastPtsMs(0,·)=0 → lastPtsMs=0 → 流式/检视窗口被钳成空窗。
+  if (result.durationMs <= 0 && lastFramePtsMs !== null) result.durationMs = lastFramePtsMs;
   return result;
 }

@@ -199,8 +199,8 @@ export function buildLocalArgs(engine: LocalEngineId, ctx: LocalArgsContext): st
       return [
         '--model',
         ctx.modelName,
-        '--language',
-        lang === 'auto' ? 'auto' : lang,
+        // Python 系 CLI 的 --language 不接受 'auto' 字面量：省略即自动检测
+        ...(lang === 'auto' ? [] : ['--language', lang]),
         '--task',
         'transcribe',
         '--output_format',
@@ -216,8 +216,7 @@ export function buildLocalArgs(engine: LocalEngineId, ctx: LocalArgsContext): st
       return [
         '--model',
         ctx.modelName,
-        '--language',
-        lang,
+        ...(lang === 'auto' ? [] : ['--language', lang]),
         '--output_format',
         'srt',
         '--output_dir',

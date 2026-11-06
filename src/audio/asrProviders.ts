@@ -83,6 +83,8 @@ async function fetchWithTimeout(
   const timer = setTimeout(() => controller.abort(new Error(`ASR 请求超过 ${timeoutMs}ms`)), timeoutMs);
   const onAbort = () => controller.abort(signal?.reason);
   signal?.addEventListener('abort', onAbort, { once: true });
+  // 进入时已中止的 signal 不会再触发 abort 事件，显式触发一次
+  if (signal?.aborted) onAbort();
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } finally {
@@ -132,7 +134,11 @@ export async function transcribeVerbose(
   if (!response.ok) {
     throw new AsrRequestError(`ASR HTTP ${response.status}`, `ASR_HTTP_${response.status}`);
   }
-  const doc = (await response.json()) as VerboseJson;
+  const doc = (await response.json().catch(() => {
+    // 非法 JSON 若任其抛 SyntaxError 会绕过 AsrRequestError 契约，
+    // 被路由层 catch{failed++} 吞成无诊断的静默块失败。
+    throw new AsrRequestError('ASR 响应不是合法 JSON', 'ASR_BAD_RESPONSE');
+  })) as VerboseJson;
   const segments = (doc.segments ?? [])
     .filter((s) => typeof s.start === 'number' && typeof s.end === 'number' && (s.text ?? '').trim().length > 0)
     .map((s) => ({
@@ -176,7 +182,9 @@ export async function transcribeBasic(
   if (!response.ok) {
     throw new AsrRequestError(`ASR HTTP ${response.status}`, `ASR_HTTP_${response.status}`);
   }
-  const doc = (await response.json()) as { text?: string };
+  const doc = (await response.json().catch(() => {
+    throw new AsrRequestError('ASR 响应不是合法 JSON', 'ASR_BAD_RESPONSE');
+  })) as { text?: string };
   const text = (doc.text ?? '').trim();
   if (!text) return [];
   return [{ startMs: 0, endMs: input.endMs - input.startMs, text }];

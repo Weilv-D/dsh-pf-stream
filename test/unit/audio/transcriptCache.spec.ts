@@ -9,6 +9,7 @@ import {
   mergeInterval,
   missingRanges,
   readTranscriptCache,
+  renumberSegmentsGlobally,
   videoFingerprint,
   writeTranscriptCache,
   type TranscriptInterval,
@@ -102,5 +103,18 @@ describe('A9 转写缓存', () => {
     expect(got.map((s) => s.text)).toEqual(['甲', '乙']);
     // 与窗口无交集的段不返回
     expect(cachedSegmentsFor(its, [2200, 3000])).toEqual([]);
+  });
+
+  it('renumberSegmentsGlobally：多区间合并后 segId 全文档唯一且时间序递增', () => {
+    // 两个相邻区间各自从 1 编号（转写落盘时的占位编号），拼接后必然冲突：
+    // mountSegments 以 segId 为段身份键，冲突会导致跨包归属错乱
+    const a = interval(0, 2000, [seg(1, 0, '甲'), seg(2, 1000, '乙')]);
+    const b = interval(2000, 4000, [seg(1, 2500, '丙'), seg(2, 3500, '丁')]);
+    const doc = mergeInterval(mergeInterval([], a), b);
+    renumberSegmentsGlobally(doc);
+    const all = cachedSegmentsFor(doc, [0, 4000]);
+    expect(all.map((s) => s.segId)).toEqual([1, 2, 3, 4]);
+    expect(all.map((s) => s.text)).toEqual(['甲', '乙', '丙', '丁']);
+    expect(new Set(all.map((s) => s.segId)).size).toBe(all.length);
   });
 });

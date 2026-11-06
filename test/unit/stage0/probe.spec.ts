@@ -88,9 +88,13 @@ describe('case 2 — 末尾 duration 避让（e2e + 纯函数）', () => {
     expect(estimateLastPtsMs(0, 30)).toBe(0);
   });
 
-  it('pts 工具：secondsToMs 取整、parseRational 有理数解析', () => {
+  it('pts 工具：secondsToMs 取整、时钟形态（Matroska tags.DURATION）、parseRational 有理数解析', () => {
     expect(secondsToMs('2.966666')).toBe(2967);
     expect(secondsToMs(undefined)).toBe(0);
+    // HH:MM:SS 时钟形态：parseFloat 会在 ':' 截断得 0，必须按时钟解析
+    expect(secondsToMs('00:02:03.123000000')).toBe(123123);
+    expect(secondsToMs('0:00:05')).toBe(5000);
+    expect(secondsToMs('01:10:05,500')).toBe(4205500);
     expect(parseRational('30000/1001')).toBeCloseTo(29.970029, 5);
     expect(parseRational('30/1')).toBe(30);
     expect(parseRational('0/0')).toBe(0);
@@ -156,12 +160,58 @@ describe('probe 元数据完整性（case 18 前置，e2e）', () => {
         'lastPtsMs',
         'rotation',
         'subtitleStreams',
+        'videoStreamIndex',
       ].sort(),
     );
     expect(result.avgFps).toBeCloseTo(30, 5);
     expect(result.codec).toBe('h264');
+    expect(result.videoStreamIndex).toBe(0);
     expect(Array.isArray(result.audioStreams)).toBe(true);
     expect(Array.isArray(result.subtitleStreams)).toBe(true);
+  });
+
+  it('封面流（attached_pic=1）被跳过：取首个真实视频流，videoStreamIndex 指向其视频流序', () => {
+    const result = buildProbeResult({
+      streams: [
+        {
+          codec_type: 'video',
+          codec_name: 'mjpeg',
+          width: 640,
+          height: 360,
+          avg_frame_rate: '0/0',
+          disposition: { attached_pic: 1 },
+        },
+        {
+          codec_type: 'video',
+          codec_name: 'h264',
+          width: 1280,
+          height: 720,
+          avg_frame_rate: '30/1',
+        },
+      ],
+      format: { duration: '2.000000' },
+    });
+    expect(result.codec).toBe('h264');
+    expect(result.codedWidth).toBe(1280);
+    expect(result.videoStreamIndex).toBe(1);
+  });
+
+  it('全部为封面流时退回首轨（仅封面文件仍可探测元数据）', () => {
+    const result = buildProbeResult({
+      streams: [
+        {
+          codec_type: 'video',
+          codec_name: 'mjpeg',
+          width: 640,
+          height: 360,
+          avg_frame_rate: '0/0',
+          disposition: { attached_pic: 1 },
+        },
+      ],
+      format: { duration: '2.000000' },
+    });
+    expect(result.codec).toBe('mjpeg');
+    expect(result.videoStreamIndex).toBe(0);
   });
 
   it('不存在视频流时报 PFSTREAM_PROBE_NO_VIDEO', () => {

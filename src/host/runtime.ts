@@ -400,7 +400,7 @@ export class HostRuntime {
     let bytes = 0;
     try {
       for (const name of readdirSync(dir)) {
-        if (!/^[0-9a-f]{32}(-[0-9a-f]{16})?\.(json|tmp)$/.test(name) && !/\.json\.tmp$/.test(name)) continue;
+        if (!CACHE_FILE_RE.test(name)) continue;
         const path = join(dir, name);
         try {
           const size = statSync(path).size;
@@ -419,6 +419,12 @@ export class HostRuntime {
 }
 
 /**
+ * 缓存文件名形态：`<fp32>.json` 与原子写临时文件 `<fp32>.json.<pid>.tmp`
+ * （临时文件在写入进程崩溃后残留，一并纳入清理与占用统计）。
+ */
+const CACHE_FILE_RE = /^[0-9a-f]{32}(-[0-9a-f]{16})?(\.json|\.json\.\d+\.tmp)$/;
+
+/**
  * 转写缓存占用（只算根目录指纹文件，不含 asr/ 下的模型与引擎）。
  * 与 clearCache 的口径一致，避免把 181MB 模型误报成“缓存”。
  */
@@ -426,7 +432,7 @@ function cacheFileBytes(dir: string): number {
   let bytes = 0;
   try {
     for (const name of readdirSync(dir)) {
-      if (!/^[0-9a-f]{32}(-[0-9a-f]{16})?\.(json|tmp)$/.test(name) && !/\.json\.tmp$/.test(name)) continue;
+      if (!CACHE_FILE_RE.test(name)) continue;
       try {
         bytes += statSync(join(dir, name)).size;
       } catch {

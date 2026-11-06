@@ -124,7 +124,8 @@ const CONFIG_FIELDS: Record<string, ConfigField> = {
   },
   threads: {
     path: ['audio', 'asr', 'local', 'threads'],
-    validate: (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 32,
+    // 上限与执行层 buildLocalArgs 的钳制一致（16）：面板放行 32 会静默按 16 运行
+    validate: (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 16,
     normalize: (value) => Math.trunc(value as number),
   },
 };

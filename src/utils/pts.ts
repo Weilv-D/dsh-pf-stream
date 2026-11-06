@@ -8,8 +8,20 @@ export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-/** 秒（number 或 ffprobe 输出的十进制字符串）→ 毫秒整数。 */
+/**
+ * 秒（number 或 ffprobe 输出的十进制字符串）→ 毫秒整数。
+ * 字符串兼容两种形态：十进制秒（"2.966666"）与时钟 HH:MM:SS[.mmm]
+ * （Matroska tags.DURATION 即此时钟形态，parseFloat 会在 ':' 处截断得 0）。
+ */
 export function secondsToMs(seconds: number | string | undefined | null): number {
+  if (typeof seconds === 'string') {
+    const clock = /^\s*(\d+):(\d{1,2}):(\d{1,2})(?:[.,](\d+))?\s*$/.exec(seconds);
+    if (clock) {
+      const base = ((Number(clock[1]) * 60 + Number(clock[2])) * 60 + Number(clock[3])) * 1000;
+      const frac = clock[4] ?? '';
+      return base + Number(frac.slice(0, 3).padEnd(3, '0'));
+    }
+  }
   const value = typeof seconds === 'string' ? Number.parseFloat(seconds) : seconds;
   if (value === undefined || value === null || !Number.isFinite(value)) return 0;
   return Math.round(value * 1000);

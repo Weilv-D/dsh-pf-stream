@@ -66,21 +66,27 @@ export function execFile(file: string, args: string[], options: ExecOptions = {}
     const stderrChunks: Buffer[] = [];
     let stdoutBytes = 0;
     let stderrBytes = 0;
+    let stdoutTruncated = false;
     let settled = false;
 
-    const tail = (chunks: Buffer[], bytes: number): string =>
-      Buffer.concat(chunks.length > 8 ? chunks.slice(-8) : chunks).subarray(Math.max(0, bytes - 2048)).toString('utf8');
+    // 尾部文本基于「实际保留的块」计算：按累计字节数起算会在块被丢弃后越界得到空串。
+    const tail = (chunks: Buffer[]): string => {
+      const merged = Buffer.concat(chunks.length > 8 ? chunks.slice(-8) : chunks);
+      return merged.subarray(Math.max(0, merged.length - 2048)).toString('utf8');
+    };
 
     const onKill = (code: string, message: string) => {
       if (settled) return;
       settled = true;
-      reject(new PfStreamError(code, `${message}\nstderr 尾部：\n${tail(stderrChunks, stderrBytes)}`));
+      reject(new PfStreamError(code, `${message}\nstderr 尾部：\n${tail(stderrChunks)}`));
     };
 
     child.stdout!.on('data', (chunk: Buffer) => {
       if (stdoutBytes < MAX_STDOUT_BYTES) {
         stdoutChunks.push(chunk);
         stdoutBytes += chunk.length;
+      } else if (!stdoutTruncated) {
+        stdoutTruncated = true;
       }
     });
     child.stderr!.on('data', (chunk: Buffer) => {
@@ -117,14 +123,25 @@ export function execFile(file: string, args: string[], options: ExecOptions = {}
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
-      const stdout: string | Buffer =
-        encoding === 'buffer' ? Buffer.concat(stdoutChunks) : Buffer.concat(stdoutChunks).toString('utf8');
-      const stderr = Buffer.concat(stderrChunks).toString('utf8');
       if (exitCode === 0) {
+        if (stdoutTruncated) {
+          // 截断的 stdout 对二进制消费方（解码帧）是坏数据：截断帧会被误判为空帧。
+          // 显式报错让调用方走各自的失败/回退路径，而非静默截短。
+          reject(
+            new PfStreamError(
+              'PFSTREAM_EXEC_OUTPUT_TRUNCATED',
+              `${file} stdout 超过 ${MAX_STDOUT_BYTES} 字节上限被截断，结果不完整`,
+            ),
+          );
+          return;
+        }
+        const stdout: string | Buffer =
+          encoding === 'buffer' ? Buffer.concat(stdoutChunks) : Buffer.concat(stdoutChunks).toString('utf8');
+        const stderr = Buffer.concat(stderrChunks).toString('utf8');
         resolve({ stdout, stderr, exitCode } as ExecResult);
       } else {
         reject(
-          new PfStreamError('PFSTREAM_EXEC_NONZERO', `${file} 退出码 ${exitCode}\nstderr 尾部：\n${tail(stderrChunks, stderrBytes)}`),
+          new PfStreamError('PFSTREAM_EXEC_NONZERO', `${file} 退出码 ${exitCode}\nstderr 尾部：\n${tail(stderrChunks)}`),
         );
       }
     });

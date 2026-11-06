@@ -91,6 +91,17 @@ window.__ModuleLoader__.load({
       loadFailed: '读取状态失败',
       installStarted: '下载已开始',
       waitDownload: '下载在后台进行，画面处理照常。',
+      engineLegacy: '旧版 provider 直连（0.2.x 配置）',
+      presetCustom: '自定义 OpenAI 兼容端点',
+      errInvalidField: '字段值不合法，请检查输入',
+      errJsonRequired: '请求必须是 JSON 格式',
+      errCrossOrigin: '跨站请求被拒绝',
+      errCredentialRejected: '凭据服务拒绝',
+      errKeyTooLong: '密钥过长',
+      errUnknownPreset: '未知服务商',
+      errNotFound: '接口不存在',
+      errMethodNotAllowed: '请求方法不被允许',
+      errInternal: '服务内部错误',
     };
 
     const EN = {
@@ -166,6 +177,17 @@ window.__ModuleLoader__.load({
       loadFailed: 'Failed to read status',
       installStarted: 'Download started',
       waitDownload: 'The download runs in the background; video processing continues.',
+      engineLegacy: 'Legacy provider passthrough (0.2.x config)',
+      presetCustom: 'Custom OpenAI-compatible endpoint',
+      errInvalidField: 'Invalid field value; check the input',
+      errJsonRequired: 'The request must be JSON',
+      errCrossOrigin: 'Cross-origin request rejected',
+      errCredentialRejected: 'Credential store rejected the request',
+      errKeyTooLong: 'The key is too long',
+      errUnknownPreset: 'Unknown provider',
+      errNotFound: 'Endpoint not found',
+      errMethodNotAllowed: 'HTTP method not allowed',
+      errInternal: 'Internal server error',
     };
 
     function detectLang() {
@@ -174,6 +196,29 @@ window.__ModuleLoader__.load({
       } catch {
         return 'zh';
       }
+    }
+
+    /** 服务端错误码 → 词典键（call() 抛出的 error.code；未知码回退原始消息）。 */
+    const ERROR_KEYS = {
+      invalid_field: 'errInvalidField',
+      json_required: 'errJsonRequired',
+      cross_origin: 'errCrossOrigin',
+      credential_rejected: 'errCredentialRejected',
+      key_too_long: 'errKeyTooLong',
+      unknown_preset: 'errUnknownPreset',
+      not_found: 'errNotFound',
+      method_not_allowed: 'errMethodNotAllowed',
+      internal_error: 'errInternal',
+    };
+
+    function translateError(t, cause) {
+      const code = cause && cause.code;
+      const key = ERROR_KEYS[code];
+      if (!key) return cause instanceof Error ? cause.message : String(cause);
+      const prefix = t(key);
+      // credential_rejected 服务端附带原因：拼在翻译后
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      return code === 'credential_rejected' && detail ? prefix + '：' + detail : prefix;
     }
 
     function makeTranslator(locale) {
@@ -629,9 +674,13 @@ window.__ModuleLoader__.load({
     function useStatus() {
       const [status, setStatus] = React.useState(null);
       const [error, setError] = React.useState('');
+      // 安装相位经 ref 传递：tick 闭包不能读 state（闭包捕获的是挂载帧的 null，
+      // 曾使安装期间的 1s 快刷永不生效）
+      const installPhaseRef = React.useRef(null);
       const load = React.useCallback(async function () {
         try {
           const data = await call('/status');
+          installPhaseRef.current = data && data.install ? data.install.phase : null;
           setStatus(data);
           setError('');
         } catch (cause) {
@@ -645,8 +694,8 @@ window.__ModuleLoader__.load({
           if (!alive) return;
           await load();
           if (!alive) return;
-          const busy = status && status.install &&
-            ['preparing', 'downloading', 'verifying', 'extracting'].indexOf(status.install.phase) >= 0;
+          const phase = installPhaseRef.current;
+          const busy = phase && ['preparing', 'downloading', 'verifying', 'extracting'].indexOf(phase) >= 0;
           timer = setTimeout(tick, busy ? 1000 : 6000);
         }
         void tick();
@@ -673,8 +722,11 @@ window.__ModuleLoader__.load({
 
       React.useEffect(function () {
         if (!status) return;
-        setCustomBase(status.cloud.baseUrl || '');
-        setCustomModel(status.cloud.model || '');
+        // 回填仅覆盖未被聚焦编辑的输入（请求在途时用户已开始输入的场景）
+        const active = typeof document !== 'undefined' && document.activeElement;
+        const activeField = active && active.getAttribute ? active.getAttribute('data-field') : null;
+        if (activeField !== 'baseUrl') setCustomBase(status.cloud.baseUrl || '');
+        if (activeField !== 'model') setCustomModel(status.cloud.model || '');
       }, [status && status.cloud && status.cloud.preset]);
 
       function run(name, action) {
@@ -688,7 +740,7 @@ window.__ModuleLoader__.load({
             return state.reload();
           })
           .catch(function (cause) {
-            setFailure(cause instanceof Error ? cause.message : String(cause));
+            setFailure(translateError(t, cause));
           })
           .then(function () {
             setBusy('');
@@ -706,12 +758,16 @@ window.__ModuleLoader__.load({
       const ffmpeg = status.ffmpeg || {};
       const localReady = status.engine && status.engine.ready;
       const cloudReady = status.cloud && status.cloud.keyConfigured && status.cloud.baseUrl && status.cloud.model;
-      const ready = ffmpeg.available && (localReady || cloudReady);
+      // 徽标口径取服务端权威结论（engine=off / audio.mode=off 时 ready=false），
+      // 本地自算会出现「转写可用 · 未启用」的自相矛盾徽标
+      const ready = status.ready === true;
       const job = status.install;
       const installing =
         job && ['preparing', 'downloading', 'verifying', 'extracting'].indexOf(job.phase) >= 0;
       const preset = status.cloud.preset;
       const custom = status.cloud.editable;
+      const presetInfo = (status.presets || []).find(function (item) { return item.id === preset; });
+      const keyUrl = presetInfo ? presetInfo.keyUrl : '';
       const activeKind = status.active
         ? status.active.kind
         : status.mode === 'local'
@@ -731,6 +787,7 @@ window.__ModuleLoader__.load({
         ['local', t('engineLocal')],
         ['cloud', t('engineCloud')],
         ['off', t('engineOff')],
+        ['legacy', t('engineLegacy')],
       ];
 
       return h(
@@ -862,9 +919,16 @@ window.__ModuleLoader__.load({
               h(SelectField, {
                 value: preset,
                 options: (status.presets || []).map(function (item) {
-                  return { value: item.id, label: item.label };
+                  // custom 的服务端 label 是中文兜底，英文界面走本地词典
+                  return {
+                    value: item.id,
+                    label: item.id === 'custom' ? t('presetCustom') : item.label,
+                  };
                 }),
                 onChange: function (value) {
+                  // 切换服务商时清空未保存的密钥草稿：
+                  // 密钥按服务商独立存储（keyRef 各自独立），跨服务商误存会双向错乱
+                  setKeyDraft('');
                   void run('preset', function () {
                     return call('/config', { field: 'preset', value: value });
                   });
@@ -878,6 +942,7 @@ window.__ModuleLoader__.load({
                     style: styles.input,
                     value: customBase,
                     placeholder: 'https://api.example.com',
+                    'data-field': 'baseUrl',
                     onChange: function (event) { setCustomBase(event.target.value); },
                     onBlur: function () {
                       void run('baseUrl', function () {
@@ -894,6 +959,7 @@ window.__ModuleLoader__.load({
                     style: styles.input,
                     value: customModel,
                     placeholder: 'whisper-1',
+                    'data-field': 'model',
                     onChange: function (event) { setCustomModel(event.target.value); },
                     onBlur: function () {
                       void run('model', function () {
@@ -955,9 +1021,9 @@ window.__ModuleLoader__.load({
               },
               t('clear'),
             ),
-            status.cloud.keyUrl
+            keyUrl
               ? h('a', {
-                  href: status.cloud.keyUrl,
+                  href: keyUrl,
                   target: '_blank',
                   rel: 'noreferrer',
                   style: { fontSize: 12, color: PALETTE.brand, textDecoration: 'none', paddingBottom: 8 },
@@ -998,6 +1064,7 @@ window.__ModuleLoader__.load({
               h('input', {
                 style: styles.input,
                 defaultValue: (status.config && status.config.language) || '',
+                key: 'language-' + ((status.config && status.config.language) || ''),
                 placeholder: t('languageAuto'),
                 onBlur: function (event) {
                   const value = event.target.value;
@@ -1030,7 +1097,8 @@ window.__ModuleLoader__.load({
                 style: styles.input,
                 type: 'number',
                 min: 0,
-                max: 32,
+                max: 16,
+                key: 'threads-' + ((status.config && status.config.threads) || 0),
                 defaultValue: (status.config && status.config.threads) || 0,
                 onBlur: function (event) {
                   const value = Number(event.target.value || 0);

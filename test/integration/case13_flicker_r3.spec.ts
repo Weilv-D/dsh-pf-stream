@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { H_SWITCH } from '../../src/stage2/switchDetector.js';
 import { makeFixtureSlot as makeSlot, runFixtureStream, type StreamRunResult } from './helpers.js';
 
 /** 从流式结果取 CanvasPacket 列表（packets 为带字节的 artifact）。 */
@@ -33,7 +32,7 @@ describe('case13 flicker R3 + hard-switch decoupling', () => {
     expect(last.hHighEff).toBeLessThan(0.105);
   });
 
-  it('R3 激活期间硬切判据仍以固定 H_switch=0.10 触发 SWITCH_STATIC', async () => {
+  it('R3 激活期间硬切判据仍以固定阈值触发 SWITCH_STATIC（与 H_high_eff 解耦）', async () => {
     const slot = await makeSlot('case13_flicker_cut.mp4');
     const result = await runFixtureStream('case13_flicker_cut.mp4', slot, { windowMs: 6000 });
 
@@ -44,8 +43,8 @@ describe('case13 flicker R3 + hard-switch decoupling', () => {
       p.units.some((u) => u.timestampMs >= 2000 && u.timestampMs <= 2100),
     );
     expect(first).toBeDefined();
-    // 规格断言：H_switch 固定 0.10，独立于 R3 抬升的 H_high_eff
-    expect(H_SWITCH).toBe(0.1);
+    // 解耦断言即上面两条：R3 已把 H_high_eff 抬升（首用例）而 SWITCH 仍触发——
+    // 硬切判据走 SWITCH_MIN_BLOCKS/SWITCH_HIST_L1 固定阈值，不读 H_high_eff。
   });
 
   it('telemetry.ctrlParams 字段完整（基准值/目标值/生效值）', async () => {
