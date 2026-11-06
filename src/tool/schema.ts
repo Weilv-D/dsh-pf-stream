@@ -50,7 +50,7 @@ export const intentValueSchema: ValueSchema = {
     action: { type: 'string', enum: ['pf_stream', 'timestamps', 'uniform', 'probe'] },
     mode: { type: 'string', enum: ['dense', 'standard', 'sparse'] },
     focus: { type: 'string', enum: ['motion', 'detail', 'balanced'] },
-    pts_window: { type: 'array', items: { type: 'number' }, description: '处理时间窗 [start_ms, end_ms]（PTS 域）' },
+    pts_window: { type: 'array', items: { type: 'number' }, description: '处理时间窗 [start_ms, end_ms]（PTS 域）；跨度建议 ≤240s，跨度过大时会在单次墙钟上限处提前停止（stopReason=wall_clock）' },
     timestamps_ms: { type: 'array', items: { type: 'number' }, description: '确定性抽帧时间戳列表（毫秒）' },
     interval_ms: { type: 'number', description: '均匀抽帧间隔（毫秒）' },
     frame_count: { type: 'number', description: '均匀抽帧目标总帧数' },
@@ -121,7 +121,8 @@ export const TOOL_DESCRIPTION =
   'mode="dense"/"sparse" for more or fewer process frames). ' +
   'Streaming canvases contain low-resolution process units and key freeze frames: before answering ' +
   'questions about text, numbers, or small objects, verify the target time with action="timestamps" ' +
-  'and roi_hint. Pass pts_window (ms) to inspect one segment; use action="uniform" with interval_ms ' +
+  'and roi_hint. Pass pts_window (ms) to inspect one segment (keep spans ≤240s; very long spans stop ' +
+  'at the per-call wall-clock limit with stopReason=wall_clock); use action="uniform" with interval_ms ' +
   'or frame_count for an even overview. Repeat streaming calls resume from the last position, so a ' +
   'long video can be viewed in segments. Cite packet IDs, unit IDs, and timestamps from the returned ' +
   'hint lines as evidence. When audio context is available, transcript segments are mounted on packets as ' +

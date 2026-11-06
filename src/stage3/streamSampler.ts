@@ -52,6 +52,13 @@ export const T_MERGE_MS = 50;
 export const SWITCH_STATIC_MS = 250;
 export const F_SWITCH_DEFER_MAX_MS = 300;
 export const HEARTBEAT_INTERVAL_MS = 5000;
+/**
+ * 单次推进墙钟缺省上限（毫秒）。预算门只在出包点生效，超长窗口/低出包内容下
+ * 解码会一路跑到客户端 900s 超时；墙钟门保证任何窗口跨度下调用都先于
+ * TOOL_TIMEOUT_MS（900s，自管上限 860s）收敛：720s 门限 + 侧车宽限/打包
+ * 余量 ≈ ≤760s，留出 ~100s 安全边距。
+ */
+export const DEFAULT_WALL_CLOCK_MS = 720_000;
 
 export interface StreamRunOptions {
   ffmpegPath: string;
@@ -66,6 +73,11 @@ export interface StreamRunOptions {
   streamWorkMaxEdge: number;
   maxPackets: number;
   maxTokensBudget: number;
+  /**
+   * 单次推进墙钟上限（毫秒）；缺省 DEFAULT_WALL_CLOCK_MS。到点即停（stopReason
+   * 'wall_clock'），已消费窗口按游标正常续接，不会重放已消费内容。
+   */
+  wallClockBudgetMs?: number | undefined;
   appliedIntentId: string;
   packetIdStart: number;
   globalIdStart: number;
@@ -88,7 +100,7 @@ export interface StreamTelemetry {
   /** 运行期间同一时刻持有的 672 擂台槽位数峰值（单槽位约束：≤2 = MOTION 1 + SETTLE 1）。 */
   arenaMaxHeld: number;
   window: [number, number];
-  stopReason: 'budget_packets' | 'budget_tokens' | 'end_of_window' | 'end_of_stream';
+  stopReason: 'budget_packets' | 'budget_tokens' | 'wall_clock' | 'end_of_window' | 'end_of_stream';
   ctrlParams: StreamBaselines;
   /** 500ms 节拍生效值轨迹（R1/R2/R3/R4 断言用）。 */
   ctrlTickLog: CtrlTickLogEntry[];
@@ -141,7 +153,9 @@ interface RuntimeState {
 }
 
 class StopIteration extends Error {
-  constructor(public reason: 'budget_packets' | 'budget_tokens') {
+  constructor(
+    public reason: 'budget_packets' | 'budget_tokens' | 'wall_clock',
+  ) {
     super(reason);
   }
 }
@@ -358,6 +372,11 @@ export async function runStreamPass(
       },
       (frame, ptsMs) => {
         framesDecoded++;
+        // 墙钟逃逸门：预算门只在出包点生效，超长窗口/低出包内容下解码会一路
+        // 跑到客户端超时；到点即停，已消费窗口按游标正常续接（不重放）。
+        if (Date.now() - decodeStart >= (options.wallClockBudgetMs ?? DEFAULT_WALL_CLOCK_MS)) {
+          throw new StopIteration('wall_clock');
+        }
         // 等效 30fps 步长门（契约 5）：ΔPTS ≥ 33.3ms 才进入感知
         if (rt.lastStepPtsMs !== null && ptsMs - rt.lastStepPtsMs < STEP_MS) return;
         framesStepped++;

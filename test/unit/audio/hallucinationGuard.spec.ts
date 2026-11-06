@@ -1,6 +1,6 @@
-/** A4：幻觉清洗四重（静音截断 / 置信度 / 复读折叠 / 黑名单）。 */
+/** A4：幻觉清洗（静音截断 / 置信度 / 复读折叠 / 黑名单 / emoji 清洗）。 */
 import { describe, expect, it } from 'vitest';
-import { foldRepeats, guardSegments, speechRateCps } from '../../../src/audio/hallucinationGuard.js';
+import { foldRepeats, guardSegments, speechRateCps, stripEmoji } from '../../../src/audio/hallucinationGuard.js';
 import type { TranscriptSegment, VadResult } from '../../../src/audio/types.js';
 
 const seg = (id: number, startMs: number, endMs: number, text: string, extra: Partial<TranscriptSegment> = {}): TranscriptSegment => ({
@@ -45,6 +45,27 @@ describe('A4 幻觉清洗', () => {
       null,
     );
     expect(r.segments.map((s) => s.text)).toEqual(['今天我们讲第一节课的内容']);
+  });
+
+  it('emoji 清洗：剥离音乐/表情符号，正常台词不误伤', () => {
+    const r = guardSegments(
+      [seg(1, 0, 6000, 'Yeah.🎼 团长到。😡诸威。马某此番受督军栽培')],
+      null,
+    );
+    expect(r.segments).toHaveLength(1);
+    expect(r.segments[0]?.text).toBe('Yeah. 团长到。 诸威。马某此番受督军栽培');
+  });
+
+  it('emoji 清洗：纯符号段剥空后整段剔除', () => {
+    const r = guardSegments([seg(1, 0, 2000, '🎼🎵😡')], null);
+    expect(r.segments).toHaveLength(0);
+    expect(r.dropped).toBe(1);
+  });
+
+  it('stripEmoji 纯函数：CJK/全角标点不受影响', () => {
+    expect(stripEmoji('Yeah.🎼 团长到。😡诸威。')).toBe('Yeah. 团长到。 诸威。');
+    expect(stripEmoji('🎼🎵😡')).toBe('');
+    expect(stripEmoji('你好，世界！')).toBe('你好，世界！');
   });
 
   it('foldRepeats 纯函数', () => {

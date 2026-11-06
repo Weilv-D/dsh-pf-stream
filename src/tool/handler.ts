@@ -211,6 +211,13 @@ export async function handleToolCall(
           '已消费窗口不会回放，下次调用将从当前游标继续；需要更多内容时提高 max_tokens_budget 后重新调用。',
       );
     }
+    if (stream.telemetry.stopReason === 'wall_clock') {
+      hintLines.push(
+        `已达单次调用墙钟上限（本次推进 ${stream.packets.length} 包后停止）；` +
+          '窗口跨度过大时解码会先于预算门触及墙钟。请用 pts_window 分段推进（建议单窗跨度 ≤240s），' +
+          '下次调用将从当前游标继续。',
+      );
+    }
     return {
       action: 'pf_stream',
       probe: probeResult,

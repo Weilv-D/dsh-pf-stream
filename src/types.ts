@@ -381,6 +381,8 @@ export interface PfStreamPluginConfig {
   /** 单次调用回传画布图像的上限（宿主单条消息图像上限 20）。 */
   maxImagesPerCall: number;
   maxTokensBudgetPerCall: number;
+  /** 单次调用解码推进墙钟上限（毫秒）；超长窗口到点即停（stopReason wall_clock）。 */
+  maxWallClockMsPerCall: number;
   maxRequestBytes: number;
   maxColdRefs: number;
   telemetryEnabled: boolean;

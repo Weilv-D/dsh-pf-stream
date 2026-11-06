@@ -5,6 +5,8 @@
  * 2. 置信度门控：no_speech_prob>0.65 且 avg_logprob<-0.8，或 compression_ratio>2.4 剔除；
  * 3. n-gram 复读折叠：单字/单词连续 ≥3 次折叠为一次，整段复读剔除；
  * 4. 黑名单：字幕组/平台水印仅在「静音区命中」或「短独立句」时精准拦截。
+ * 5. emoji 清洗：ASR 文本中的 emoji（音乐/表情符号，Whisper 对配乐 hallucinate
+ *    的典型产物）整体剥离；剥空即整段剔除。仅作用于 ASR 输出，字幕路径不经过此清洗。
  */
 
 import type { TranscriptSegment, VadResult } from './types.js';
@@ -52,6 +54,17 @@ function confidenceFail(seg: TranscriptSegment): boolean {
   return false;
 }
 
+/** ASR 文本 emoji 剥离：音乐/表情符号及其连接符（ZWJ/VS16）替换为空格并收拢。 */
+export function stripEmoji(text: string): string {
+  return text
+    .replace(
+      /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu,
+      ' ',
+    )
+    .replace(/ {2,}/g, ' ')
+    .trim();
+}
+
 /** 单字符（CJK）与拉丁词的连续复读折叠。 */
 export function foldRepeats(text: string): string | null {
   const cjk = text.replace(/([\u4e00-\u9fff])\1{2,}/g, '$1');
@@ -83,7 +96,7 @@ export function guardSegments(
       dropped++;
       continue;
     }
-    const folded = foldRepeats(seg.text);
+    const folded = foldRepeats(stripEmoji(seg.text));
     if (folded === null) {
       dropped++;
       continue;

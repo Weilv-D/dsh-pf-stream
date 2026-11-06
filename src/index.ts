@@ -52,10 +52,11 @@ export const DEFAULT_MAX_REQUEST_BYTES = 56 * 1024 * 1024;
 
 export const Config = Schema.object({
   renderVisualId: Schema.boolean().default(true).description('渲染超像素微型反色角标'),
-  maxPacketsPerCall: Schema.number().default(64).description('单次调用画布包数上限'),
+  maxPacketsPerCall: Schema.number().default(20).description('单次调用画布包数上限（与宿主单条消息 20 图上限对齐，保证每包都有画布）'),
   maxFramesPerCall: Schema.number().default(128).description('确定性抽帧单次目标帧数上限（frame_count 受此钳制）'),
   maxImagesPerCall: Schema.number().default(20).description('单次调用回传图像上限（宿主单条消息图像上限 20）'),
   maxTokensBudgetPerCall: Schema.number().default(65536).description('单次调用视觉 Token 预算上限（intent.max_tokens_budget 受此钳制）'),
+  maxWallClockMsPerCall: Schema.number().default(720_000).description('单次调用解码推进墙钟上限（毫秒；720000 默认，超长窗口到点即停防客户端超时）'),
   maxRequestBytes: Schema.number().default(DEFAULT_MAX_REQUEST_BYTES).description('请求字节软水位'),
   maxColdRefs: Schema.number().default(4).description('冷区引用数量上限'),
   telemetryEnabled: Schema.boolean().default(true).description('遥测开关'),
@@ -250,6 +251,7 @@ export function buildToolDefinition(_deps: {
       streamWorkMaxEdge: config.streamWorkMaxEdge,
       maxPacketsPerCall: config.maxPacketsPerCall,
       maxTokensBudgetPerCall: config.maxTokensBudgetPerCall,
+      maxWallClockMsPerCall: config.maxWallClockMsPerCall,
       maxRequestBytes: config.maxRequestBytes,
       maxColdRefs: config.maxColdRefs,
       epochCompactionWindow: config.epochCompactionWindow,

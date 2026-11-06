@@ -46,6 +46,8 @@ export interface StreamCallOptions {
   streamWorkMaxEdge: number;
   maxPacketsPerCall: number;
   maxTokensBudgetPerCall: number;
+  /** 单次推进墙钟上限（毫秒）；透传给采样器墙钟逃逸门。 */
+  maxWallClockMsPerCall: number;
   /** 请求字节水位（Base64 编码后口径）。 */
   maxRequestBytes: number;
   maxColdRefs: number;
@@ -198,6 +200,7 @@ async function runStreamCallLocked(
     streamWorkMaxEdge: options.streamWorkMaxEdge,
     maxPackets: intent.max_packets ?? options.maxPacketsPerCall,
     maxTokensBudget: intent.max_tokens_budget ?? options.maxTokensBudgetPerCall,
+    wallClockBudgetMs: options.maxWallClockMsPerCall,
     appliedIntentId: merged.intentId,
     packetIdStart: session.packetSeq + 1,
     globalIdStart: session.globalUnitSeq + 1,
