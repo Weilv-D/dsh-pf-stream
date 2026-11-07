@@ -229,6 +229,7 @@ describe('设置页 API 契约', () => {
     expect(result.status).toBe(200);
     const data = result.json.data as Record<string, unknown>;
     expect(data.engine).toContain('官方语音输入');
+    expect(data.readinessOnly).toBe(true);
     expect(data.message).toContain('实际转写');
   });
 

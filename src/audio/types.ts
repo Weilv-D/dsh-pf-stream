@@ -62,6 +62,8 @@ export interface AsrSettings {
   provider: AsrProviderKind;
   baseUrl: string | null;
   model: string | null;
+  /** host_sensevoice 专用：官方 provider 的展示名（用于缓存指纹，区分模型变体）。 */
+  modelLabel?: string | null | undefined;
   apiKey: string | null;
   language: string | null;
   /** local_cli 附加参数：{audio}/{out} 令牌；无 {audio} 时音频路径追加末尾。 */

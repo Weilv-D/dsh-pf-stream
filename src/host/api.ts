@@ -299,7 +299,8 @@ export function registerApi(deps: ApiDeps): () => void {
             data: {
               engine: label,
               latencyMs: 0,
-              message: '官方语音输入插件模型已就绪；实际转写在视频调用时执行',
+              readinessOnly: true,
+              message: '官方语音输入插件模型已就绪；此处只检查就绪，实际转写在视频调用时执行',
             },
           });
           return;

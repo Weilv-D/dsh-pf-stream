@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   hostSpeechSupportsLanguage,
   probeHostSpeech,
+  resolveHostSpeechLanguage,
   type HostSpeechService,
 } from '../../../src/asr/hostSpeech.js';
 
@@ -133,6 +134,33 @@ describe('probeHostSpeech', () => {
     expect(facts.ready).toBe(false);
     expect(facts.reason).toContain('未准备');
   });
+
+  it('host-local provider 缺少 id 且存在同名 cloud provider → 拒绝选中', () => {
+    const facts = probeHostSpeech(
+      service({
+        snapshot: () => ({
+          providers: [
+            {
+              name: 'No id local',
+              location: 'host-local',
+              languages: ['zh'],
+              preparation: { snapshot: () => ({ phase: 'ready' }) },
+            },
+            {
+              id: 'sensevoice-local',
+              name: 'Cloud copy',
+              location: 'cloud',
+              languages: ['zh'],
+              preparation: { snapshot: () => ({ phase: 'ready' }) },
+            },
+          ],
+        }),
+      }),
+    );
+    expect(facts.providerId).toBeNull();
+    expect(facts.ready).toBe(false);
+    expect(facts.reason).toContain('缺少 id');
+  });
 });
 
 describe('hostSpeechSupportsLanguage', () => {
@@ -147,5 +175,36 @@ describe('hostSpeechSupportsLanguage', () => {
 
   it('不支持的语言返回 false', () => {
     expect(hostSpeechSupportsLanguage(['auto', 'zh'], 'ja')).toBe(false);
+  });
+});
+
+describe('resolveHostSpeechLanguage', () => {
+  it('返回 provider 列表中的精确值，而不是请求里的地区标签', () => {
+    expect(resolveHostSpeechLanguage(['auto', 'zh', 'en'], 'zh-CN')).toEqual({
+      supported: true,
+      language: 'zh',
+    });
+    expect(resolveHostSpeechLanguage(['zh-CN'], 'zh-cn')).toEqual({
+      supported: true,
+      language: 'zh-CN',
+    });
+  });
+
+  it('空白语言返回 null，让官方使用默认值', () => {
+    expect(resolveHostSpeechLanguage(['auto', 'zh'], '   ')).toEqual({
+      supported: true,
+      language: null,
+    });
+  });
+
+  it('auto 返回 provider 的 auto 原值；不支持时返回 false', () => {
+    expect(resolveHostSpeechLanguage(['auto', 'zh'], 'auto')).toEqual({
+      supported: true,
+      language: 'auto',
+    });
+    expect(resolveHostSpeechLanguage(['auto', 'zh'], 'ko')).toEqual({
+      supported: false,
+      language: null,
+    });
   });
 });

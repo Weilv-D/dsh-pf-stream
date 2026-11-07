@@ -116,7 +116,7 @@ The engine is chosen by `audio.asr.engine`, default `auto`:
 | `off` | Transcription off (subtitles are still extracted) |
 | `legacy` | 0.2.x semantics: follow the old `audio.asr.provider` values |
 
-The engine in use is shown in the plugin page badge (for example, "Transcription ready · Cloud" or "Transcription ready · Official voice"). Local, cloud and the official voice-input model are configured in the plugin page, not by hand-editing config. Transcript text stays in the original language. If `@deepseek-ai/dsh-experimental-voice-input-bundle` is installed and its SenseVoice model is prepared, the plugin reuses that model; it never downloads or prepares the model itself. The official provider returns text per block with no intra-block timestamps; blocks are at most 15 seconds, so transcript times are block-level. Speech mounts onto the matching packet:
+The engine in use is shown in the plugin page badge (for example, "Transcription ready · Cloud" or "Transcription ready · Official voice"). Local, cloud and the official voice-input model are configured in the plugin page, not by hand-editing config. Transcript text stays in the original language. If `@deepseek-ai/dsh-experimental-voice-input-bundle` is installed and its SenseVoice model is prepared, the plugin reuses that model; it never downloads or prepares the model itself. The official provider returns text per block with no intra-block timestamps; blocks are at most 15 seconds, so transcript times are block-level. Regional language tags are normalized to the exact provider entry (for example `zh-CN` → `zh`); blank language means auto-detect. A non-`none` legacy `audio.asr.provider` keeps legacy behavior under `engine=auto`; set `engine=host` or clear the legacy provider to reuse the official model. Speech mounts onto the matching packet:
 
 ```text
 Audio @Packet #42: [12.1s-12.9s] "we spent three years on this" | [13.0s-13.4s] "and today we can finally talk"
@@ -134,7 +134,7 @@ Audio @Packet #42: [12.1s-12.9s] "we spent three years on this" | [13.0s-13.4s] 
 
 "Clear transcript cache" removes only the per-file, per-engine transcript JSON; it can be regenerated. Canvas images live in the host attachment store and belong to session history, so this button leaves them alone. Model and engine files are also kept; use "Download local model" again to reinstall.
 
-"Test transcription" runs a real short audio clip through the whole chain, not just a file existence check. In `host` mode it only checks that the official provider is ready; the actual transcription runs when a video is processed.
+"Test transcription" runs a real short audio clip through the whole chain, not just a file existence check. In `host` mode, or when `auto`/`local` selects the official provider, the button becomes "Check official voice readiness" and checks only that the official provider is ready; the actual transcription runs when a video is processed.
 
 ## Canvas forms and billing
 

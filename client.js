@@ -52,8 +52,11 @@ window.__ModuleLoader__.load({
       installing: '正在安装',
       cancel: '取消',
       verify: '测试转写',
+      verifyHost: '检查官方语音就绪',
       verifying: '正在验证…',
       verifyHint: '使用一段测试音频验证引擎是否可用。',
+      verifyHostHint: '只检查官方语音输入模型是否就绪；真实转写在处理视频时执行。',
+      verifyHostOk: '官方语音已就绪（未做真实转写）',
       verifyOk: '验证通过',
       cloudSection: '云端转写密钥',
       preset: '服务商',
@@ -145,8 +148,11 @@ window.__ModuleLoader__.load({
       installing: 'Installing',
       cancel: 'Cancel',
       verify: 'Test transcription',
+      verifyHost: 'Check official voice readiness',
       verifying: 'Testing…',
       verifyHint: 'Runs a short test tone through the engine.',
+      verifyHostHint: 'Checks only whether the official voice model is ready; real transcription runs on video calls.',
+      verifyHostOk: 'Official voice is ready (no real transcription test)',
       verifyOk: 'Verified',
       cloudSection: 'Cloud transcription key',
       preset: 'Provider',
@@ -774,6 +780,7 @@ window.__ModuleLoader__.load({
       const cloudReady = status.cloud && status.cloud.keyConfigured && status.cloud.baseUrl && status.cloud.model;
       const hostReady = status.host && status.host.ready;
       const hostAvailable = status.host && status.host.available;
+      const engineMode = (status.config && status.config.engine) || status.mode || 'auto';
       // 徽标口径取服务端权威结论（engine=off / audio.mode=off 时 ready=false），
       // 本地自算会出现「转写可用 · 未启用」的自相矛盾徽标
       const ready = status.ready === true;
@@ -803,6 +810,8 @@ window.__ModuleLoader__.load({
             : activeKind === 'cloud'
               ? t('activeCloud')
               : t('activeNone');
+      // /test 按当前实际选中的引擎工作；auto/local 选中 host 时也要显示「检查就绪」。
+      const hostCheckMode = engineMode === 'host' || activeKind === 'host';
 
       const engineModes = [
         ['auto', t('engineAuto')],
@@ -926,15 +935,16 @@ window.__ModuleLoader__.load({
               onClick: function () {
                 void run('test', function () {
                   return call('/test', {}).then(function (result) {
-                    return (result.ok ? t('verifyOk') : result.message) +
+                    var okText = hostCheckMode ? t('verifyHostOk') : t('verifyOk');
+                    return (result.ok ? okText : result.message) +
                       ' · ' + (result.engine || '') + ' · ' + (result.latencyMs || 0) + 'ms';
                   });
                 });
               },
             },
-            busy === 'test' ? t('verifying') : t('verify'),
+            busy === 'test' ? t('verifying') : (hostCheckMode ? t('verifyHost') : t('verify')),
           ),
-          h('span', { style: styles.hint }, t('verifyHint')),
+          h('span', { style: styles.hint }, t(hostCheckMode ? 'verifyHostHint' : 'verifyHint')),
         ),
 
         notice ? h('p', { style: styles.notice }, notice) : null,

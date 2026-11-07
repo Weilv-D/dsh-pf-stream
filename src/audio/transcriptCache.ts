@@ -45,8 +45,13 @@ export async function videoFingerprint(videoPath: string): Promise<string> {
  * 只含影响转写结果的参数；apiKey 不参与（换密钥不失效）。
  */
 export function engineFingerprint(settings: AsrSettings): string {
+  const provider = settings.provider;
   const digest = createHash('sha256')
-    .update(`${settings.provider}|${settings.baseUrl ?? ''}|${settings.model ?? ''}|${settings.language}`)
+    .update(
+      provider === 'host_sensevoice'
+        ? `${provider}|${settings.model ?? ''}|${settings.modelLabel ?? ''}|${settings.language ?? ''}`
+        : `${provider}|${settings.baseUrl ?? ''}|${settings.model ?? ''}|${settings.language}`,
+    )
     .update(`|${(settings.args ?? []).join('\u0001')}`)
     .digest('hex');
   return digest.slice(0, 16);

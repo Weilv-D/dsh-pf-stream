@@ -69,6 +69,26 @@ describe('A9 转写缓存', () => {
     expect(engineFingerprint(cloud)).toBe(engineFingerprint({ ...cloud, apiKey: 'sk-b' }));
   });
 
+  it('engineFingerprint：host 的模型变体参与指纹', () => {
+    const int8: AsrSettings = {
+      provider: 'host_sensevoice',
+      baseUrl: null,
+      model: 'sensevoice-local',
+      modelLabel: 'SenseVoiceSmall (INT8)',
+      apiKey: null,
+      language: 'zh',
+      args: null,
+      timeoutMs: 120000,
+      maxConcurrency: 1,
+    };
+    expect(engineFingerprint(int8)).not.toBe(
+      engineFingerprint({ ...int8, modelLabel: 'SenseVoiceSmall (FP32)' }),
+    );
+    expect(engineFingerprint(int8)).toBe(
+      engineFingerprint({ ...int8, apiKey: 'sk-ignored' }),
+    );
+  });
+
   it('write/read 原子往返；坏文档返回 null', async () => {
     const fp = 'f'.repeat(32);
     const its = [interval(0, 2000, [seg(1, 100, '甲')])];

@@ -239,4 +239,43 @@ describe('引擎选择 resolveAsr', () => {
     expect(out.settings).toBeNull();
     expect(out.reason).toBe('host_missing_service');
   });
+
+  it('host 把 zh-CN 归一化为 provider 的精确语言 zh', () => {
+    const out = resolveAsr(slice({ engine: 'host' }), 'zh-CN', NO_ENV, facts({ hostSpeech: hostFacts() }));
+    expect(out.kind).toBe('host');
+    expect(out.settings?.language).toBe('zh');
+  });
+
+  it('host 把空白语言当作省略，不把空串传给官方 resolve', () => {
+    const out = resolveAsr(slice({ engine: 'host' }), '   ', NO_ENV, facts({ hostSpeech: hostFacts() }));
+    expect(out.kind).toBe('host');
+    expect(out.settings?.language).toBeNull();
+  });
+
+  it('auto 的 host 未就绪且本地也缺失时，原因指向 host 而不是 local_missing_engine', () => {
+    const out = resolveAsr(
+      slice(),
+      undefined,
+      NO_ENV,
+      facts({
+        detection: LOCAL_MISSING,
+        hostSpeech: hostFacts({ ready: false, phase: 'unprepared', reason: '模型未准备' }),
+      }),
+    );
+    expect(out.settings).toBeNull();
+    expect(out.reason).toBe('host_not_ready');
+    expect(out.detail).toContain('模型未准备');
+    expect(out.detail).toContain('尚未安装本地转写引擎');
+  });
+
+  it('host 声称 ready 但 providerId 缺失时，不返回 host 设置', () => {
+    const out = resolveAsr(
+      slice({ engine: 'host' }),
+      undefined,
+      NO_ENV,
+      facts({ hostSpeech: hostFacts({ providerId: null }) }),
+    );
+    expect(out.settings).toBeNull();
+    expect(out.reason).toBe('host_not_ready');
+  });
 });

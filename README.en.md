@@ -22,7 +22,7 @@
 | :--- | :--- |
 | 1 | Install ffmpeg ([commands below](#1-install-ffmpeg)); `ffmpeg -version` must print output |
 | 2 | Left sidebar **Plugins** → **Video understanding** → switch it on |
-| 3 | Pick one transcription path: download the local model (~190 MB), reuse a prepared official voice-input model, or enter a cloud key. Then click **Test transcription** |
+| 3 | Pick one transcription path: download the local model (~190 MB), reuse a prepared official voice-input model, or enter a cloud key. For local/cloud, click **Test transcription**; for official voice, click **Check official voice readiness** |
 | 4 | Give the agent a video path and ask |
 
 Video works without transcription. Only videos that have no subtitles and need speech text require step 3.
@@ -86,7 +86,7 @@ Three cards at the top report video decode (ffmpeg), local transcription, and cl
 | Path | Best for | What to do |
 | :--- | :--- | :--- |
 | Local (recommended) | Free, offline, no API key | Click "Download local model" (~190 MB), then "Test transcription" |
-| Official voice input | Official voice-input plugin installed and its model prepared | No whisper download; wait for "Model ready" |
+| Official voice input | Official voice-input plugin installed and its model prepared | No whisper download; wait for "Model ready", then click "Check official voice readiness" |
 | Cloud | You have a key, or the machine is slow | Pick OpenAI / Groq / a custom compatible endpoint, paste the key, save, then test |
 | Skip for now | Videos have subtitles | Use it as is; speech-only videos get no transcript |
 
@@ -105,9 +105,10 @@ If `@deepseek-ai/dsh-experimental-voice-input-bundle` is installed and enabled, 
 
 1. Open "Advanced" and set the engine to `auto`, `local`, or `host`.
 2. The card reading "Official voice input · Model ready" means it is usable.
-3. No whisper model download is needed.
+3. Click "Check official voice readiness". This only checks provider state; real transcription runs on video calls.
+4. No whisper model download is needed.
 
-`auto` still checks the cloud first; a fully configured cloud is not replaced. When the model is not prepared, the plugin only shows a notice and never downloads it. The official provider returns text per block with no intra-block timestamps; this plugin cuts blocks of at most 15 seconds, so timestamps are block-level.
+`auto` still checks the cloud first; a fully configured cloud is not replaced. A non-`none` legacy `audio.asr.provider` keeps legacy behavior under `engine=auto`; set `engine=host` or clear the legacy provider to reuse the official model. Regional tags such as `zh-CN` / `en-US` are normalized to the provider's base language; blank means auto-detect. When the model is not prepared, the plugin only shows a notice and never downloads it. The official provider returns text per block with no intra-block timestamps; this plugin cuts blocks of at most 15 seconds, so timestamps are block-level.
 
 ### Cloud key
 

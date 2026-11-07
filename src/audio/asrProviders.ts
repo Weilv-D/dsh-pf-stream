@@ -212,10 +212,11 @@ export async function transcribeHostSpeech(
   }
   let spec: unknown;
   try {
+    const language = settings.language?.trim();
     spec = service.resolve({
       audio: input.bytes,
       providerId,
-      ...(settings.language === null ? {} : { language: settings.language }),
+      ...(language === undefined || language === '' ? {} : { language }),
     });
   } catch (error) {
     throw new AsrRequestError(
@@ -246,6 +247,9 @@ export async function transcribeHostSpeech(
     ]);
   } catch (error) {
     if (error === timeoutError) throw error;
+    if (signal?.aborted) {
+      throw new AsrRequestError('官方语音输入被取消', 'ASR_ABORT');
+    }
     throw new AsrRequestError(
       `官方语音输入转写失败：${(error as Error).message}`,
       'ASR_HOST_TRANSCRIBE',
@@ -254,7 +258,10 @@ export async function transcribeHostSpeech(
     if (timer !== undefined) clearTimeout(timer);
     signal?.removeEventListener('abort', onAbort);
   }
-  const text = (transcript.text ?? '').trim();
+  if (transcript === null || typeof transcript !== 'object') {
+    throw new AsrRequestError('官方语音输入返回空结果', 'ASR_HOST_TRANSCRIBE');
+  }
+  const text = typeof transcript.text === 'string' ? transcript.text.trim() : '';
   if (text.length === 0) return [];
   return [{ startMs: 0, endMs: input.endMs - input.startMs, text }];
 }

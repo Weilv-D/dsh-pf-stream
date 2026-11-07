@@ -5,14 +5,15 @@
  * 默认 engine='auto' 的语义：
  * 1. 用户显式配了旧版 provider → 尊重旧配置（0.2.x 行为不变）；
  * 2. 有云端密钥 → 云端（便宜、快、免下载）；
- * 3. 本机有可用本地引擎 → 本地；
- * 4. 都没有 → null，并给出「为什么没有」的原因供结果提示与设置页展示。
+ * 3. 官方语音输入模型就绪 → 复用它；
+ * 4. 本机有可用本地引擎 → 本地；
+ * 5. 都没有 → null，并给出「为什么没有」的原因供结果提示与设置页展示。
  */
 
 import type { AsrSettings } from '../audio/types.js';
 import { buildLocalArgs, cloudPreset, LOCAL_ENGINES, modelPreset } from './catalog.js';
 import type { LocalEngineSnapshot } from './detect.js';
-import { hostSpeechSupportsLanguage, type HostSpeechFacts } from './hostSpeech.js';
+import { resolveHostSpeechLanguage, type HostSpeechFacts } from './hostSpeech.js';
 
 export type AsrEngineMode = 'auto' | 'local' | 'cloud' | 'host' | 'off' | 'legacy';
 
@@ -86,17 +87,19 @@ function hostSettings(
     !host.available ||
     !host.ready ||
     host.service === null ||
-    host.providerId === null ||
-    !hostSpeechSupportsLanguage(host.languages, language)
+    host.providerId === null
   ) {
     return null;
   }
+  const choice = resolveHostSpeechLanguage(host.languages, language);
+  if (!choice.supported) return null;
   return {
     provider: 'host_sensevoice',
     baseUrl: null,
     model: host.providerId,
+    modelLabel: host.providerName,
     apiKey: null,
-    language,
+    language: choice.language,
     args: null,
     // 官方推理超时默认 120s；工具侧 grace 仍按 audio.graceMs 控制等待。
     timeoutMs: Math.max(config.timeoutMs, 120_000),
@@ -118,10 +121,16 @@ function hostUnavailable(
   if (!host.ready) {
     return { reason: 'host_not_ready', detail: host.reason ?? '官方语音输入插件模型未准备' };
   }
-  return {
-    reason: 'host_language_unsupported',
-    detail: `官方语音输入插件不支持语言 ${language ?? 'auto'}`,
-  };
+  if (host.service === null || host.providerId === null) {
+    return { reason: 'host_not_ready', detail: '官方语音输入提供方当前不可用' };
+  }
+  if (!resolveHostSpeechLanguage(host.languages, language).supported) {
+    return {
+      reason: 'host_language_unsupported',
+      detail: `官方语音输入插件不支持语言 ${language ?? 'auto'}`,
+    };
+  }
+  return { reason: 'host_not_ready', detail: '官方语音输入提供方当前不可用' };
 }
 
 export function resolveAsr(
@@ -130,7 +139,8 @@ export function resolveAsr(
   env: NodeJS.ProcessEnv,
   facts: AsrRuntimeFacts | undefined,
 ): AsrResolution {
-  const language = intentLanguage ?? config.language?.trim() ?? null;
+  const intent = intentLanguage?.trim();
+  const language = intent !== undefined && intent !== '' ? intent : config.language?.trim() || null;
   const envKey = env.DSH_ASR_API_KEY?.trim();
 
   // 没有运行时事实（单元测试 / 宿主未注入）时退回 0.2.x 语义。
@@ -223,9 +233,9 @@ export function resolveAsr(
     };
   }
 
+  const host = facts.hostSpeech;
   const wantHost = mode === 'host' || mode === 'local' || mode === 'auto';
   if (wantHost) {
-    const host = facts.hostSpeech;
     const settings = hostSettings(config, language, host);
     if (settings !== null) {
       return {
@@ -248,11 +258,22 @@ export function resolveAsr(
   if (wantLocal) {
     const detection = facts.detection;
     if (detection.exe === null || !detection.ready) {
+      const localReason = detection.exe === null ? 'local_missing_engine' : 'local_missing_model';
+      const localDetail = detection.reason ?? '本地转写尚未就绪';
+      if (mode === 'auto' && host !== undefined && host.available) {
+        const missing = hostUnavailable(language, host);
+        return {
+          settings: null,
+          kind: 'none',
+          reason: missing.reason,
+          detail: `${missing.detail}；${localDetail}`,
+        };
+      }
       return {
         settings: null,
         kind: 'none',
-        reason: detection.exe === null ? 'local_missing_engine' : 'local_missing_model',
-        detail: detection.reason ?? '本地转写尚未就绪',
+        reason: localReason,
+        detail: localDetail,
       };
     }
     const enginePreset = modelPreset(detection.modelId);

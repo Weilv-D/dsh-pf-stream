@@ -100,4 +100,53 @@ describe('transcribeHostSpeech', () => {
     expect(error).toBeInstanceOf(AsrRequestError);
     expect((error as AsrRequestError).code).toBe('ASR_TIMEOUT');
   });
+
+  it('空白语言不传给官方 resolve', async () => {
+    const resolve = vi.fn(() => ({}));
+    const service: HostSpeechService = {
+      snapshot: () => ({ providers: [] }),
+      resolve,
+      transcribe: async () => ({ text: 'hi' }),
+    };
+    await transcribeHostSpeech(
+      { startMs: 0, endMs: 1_000, bytes: Buffer.from('RIFF'), mimeType: 'audio/wav' },
+      { settings: settings({ hostService: service, language: '   ' }) },
+    );
+    expect(resolve).toHaveBeenCalledWith({
+      audio: Buffer.from('RIFF'),
+      providerId: 'sensevoice-local',
+    });
+  });
+
+  it('外部取消 → AsrRequestError(ASR_ABORT)，不误报为转写失败', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const service: HostSpeechService = {
+      snapshot: () => ({ providers: [] }),
+      resolve: () => ({}),
+      transcribe: async () => {
+        throw new DOMException('aborted', 'AbortError');
+      },
+    };
+    const error = await transcribeHostSpeech(
+      { startMs: 0, endMs: 1_000, bytes: Buffer.from('RIFF'), mimeType: 'audio/wav' },
+      { settings: settings({ hostService: service }), signal: controller.signal },
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AsrRequestError);
+    expect((error as AsrRequestError).code).toBe('ASR_ABORT');
+  });
+
+  it('官方返回 null → AsrRequestError(ASR_HOST_TRANSCRIBE)，不抛裸 TypeError', async () => {
+    const service: HostSpeechService = {
+      snapshot: () => ({ providers: [] }),
+      resolve: () => ({}),
+      transcribe: async () => null as unknown as { text: string },
+    };
+    const error = await transcribeHostSpeech(
+      { startMs: 0, endMs: 1_000, bytes: Buffer.from('RIFF'), mimeType: 'audio/wav' },
+      { settings: settings({ hostService: service }) },
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AsrRequestError);
+    expect((error as AsrRequestError).code).toBe('ASR_HOST_TRANSCRIBE');
+  });
 });

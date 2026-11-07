@@ -7,7 +7,7 @@
  * - 官方包标注 experimental，直接依赖类型会把插件锁死在某个版本。
  */
 
-/** 官方 provider 的 `sensevoice-local` id；只在没有同名 provider 时回退到任意 host-local。 */
+/** 官方 SenseVoice provider 的首选 id；没有同名 provider 时可退回任意有 id 的 host-local。 */
 export const HOST_SPEECH_PROVIDER_ID = 'sensevoice-local';
 
 export interface HostSpeechPreparationView {
@@ -120,9 +120,12 @@ export function probeHostSpeech(
   }
 
   const providers = Array.isArray(snapshot.providers) ? snapshot.providers : [];
-  const hostProviders = providers.filter((provider) => provider.location === 'host-local');
-  // 只接受 host-local；同名 provider 若被官方标成 cloud，绝不当作本地复用，
-  // 否则会把音频发给云端，违背「复用本地模型」的语义。
+  const hostLocalProviders = providers.filter((provider) => provider.location === 'host-local');
+  // 只接受 host-local；官方 resolve 按 id 在全部 provider 中查找，因此没有 id 的
+  // host provider 不能靠 preferredProviderId 伪造 id，否则可能命中同名云端 provider。
+  const hostProviders = hostLocalProviders.filter(
+    (provider) => typeof provider.id === 'string' && provider.id.trim() !== '',
+  );
   const provider =
     hostProviders.find((entry) => entry.id === preferredProviderId) ?? hostProviders[0] ?? null;
 
@@ -134,7 +137,25 @@ export function probeHostSpeech(
       providerName: null,
       phase: null,
       languages: [],
-      reason: '官方语音输入插件没有本地转写提供方',
+      reason:
+        hostLocalProviders.length > 0
+          ? '官方语音输入提供方缺少 id，拒绝调用'
+          : '官方语音输入插件没有本地转写提供方',
+      service,
+    };
+  }
+
+  const providerId = provider.id?.trim();
+  if (providerId === undefined || providerId === '') {
+    // 上面的 filter 已排除；保留防御，避免未来改动把空 id 带进来。
+    return {
+      available: true,
+      ready: false,
+      providerId: null,
+      providerName: null,
+      phase: null,
+      languages: [],
+      reason: '官方语音输入提供方缺少 id，拒绝调用',
       service,
     };
   }
@@ -145,8 +166,8 @@ export function probeHostSpeech(
   return {
     available: true,
     ready,
-    providerId: provider.id ?? preferredProviderId,
-    providerName: provider.name ?? provider.id ?? preferredProviderId,
+    providerId,
+    providerName: provider.name ?? providerId,
     phase,
     languages,
     reason: ready
@@ -158,18 +179,38 @@ export function probeHostSpeech(
   };
 }
 
-/** 语言是否被 provider 支持；null/auto 由官方自动识别。 */
+/** 官方 provider 支持的语言；官方 resolve 使用严格相等，必须回传 provider 列表里的原值。 */
+export interface HostSpeechLanguageChoice {
+  supported: boolean;
+  /** 传给官方 resolve 的精确语言；null 表示省略请求语言。 */
+  language: string | null;
+}
+
+export function resolveHostSpeechLanguage(
+  languages: readonly string[],
+  language: string | null | undefined,
+): HostSpeechLanguageChoice {
+  if (language === null || language === undefined || language.trim() === '') {
+    return { supported: true, language: null };
+  }
+  const wanted = language.trim();
+  const lower = wanted.toLowerCase();
+  if (lower === 'auto') {
+    const auto = languages.find((entry) => entry.toLowerCase() === 'auto');
+    return { supported: true, language: auto ?? null };
+  }
+  const exact = languages.find((entry) => entry.toLowerCase() === lower);
+  if (exact !== undefined) return { supported: true, language: exact };
+  const base = lower.split(/[-_]/)[0] ?? lower;
+  const baseEntry = languages.find((entry) => entry.toLowerCase() === base);
+  if (baseEntry !== undefined) return { supported: true, language: baseEntry };
+  return { supported: false, language: null };
+}
+
+/** 语言是否被 provider 支持；null/空白/auto 由官方自动识别。 */
 export function hostSpeechSupportsLanguage(
   languages: readonly string[],
   language: string | null | undefined,
 ): boolean {
-  if (language === null || language === undefined || language.trim() === '' || language === 'auto') {
-    return true;
-  }
-  const wanted = language.toLowerCase();
-  const base = wanted.split(/[-_]/)[0] ?? wanted;
-  return languages.some((entry) => {
-    const value = entry.toLowerCase();
-    return value === wanted || value === base;
-  });
+  return resolveHostSpeechLanguage(languages, language).supported;
 }
