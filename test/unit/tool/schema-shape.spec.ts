@@ -21,13 +21,32 @@ describe('toolParameters 根形状（register 路径契约）', () => {
     expect(toolParameters.properties.intent?.type).toBe('object');
   });
 
-  it('properties 显式声明 9 个历史便捷字段（模型按 properties 生成实参）', () => {
+  it('properties 显式声明 11 个历史便捷字段（模型按 properties 生成实参）', () => {
     const legacy = [
       'start_time', 'end_time', 'time_range', 'timestamps', 'fps',
-      'interval', 'num_frames', 'crop', 'probe_only',
+      'interval', 'num_frames', 'crop', 'bbox', 'roi', 'probe_only',
     ];
     for (const key of legacy) {
       expect(toolParameters.properties[key], `缺少顶层字段 ${key}`).toBeDefined();
+    }
+  });
+
+  it('13 个 flat intent 别名可放顶层，legacy 别名只在顶层', () => {
+    const flat = [
+      'action', 'mode', 'focus', 'pts_window', 'timestamps_ms', 'interval_ms',
+      'frame_count', 'roi_hint', 'full_frame', 'max_packets', 'max_tokens_budget',
+      'reset', 'audio',
+    ];
+    for (const key of flat) {
+      expect(toolParameters.properties[key], `缺少顶层别名 ${key}`).toBeDefined();
+    }
+    const intentProperties = toolParameters.properties.intent?.properties ?? {};
+    for (const key of [...flat]) {
+      expect(intentProperties[key], `intent 缺少标准字段 ${key}`).toBeDefined();
+    }
+    expect(intentProperties.video_path).toBeUndefined();
+    for (const key of ['start_time', 'time_range', 'crop', 'bbox', 'roi', 'probe_only']) {
+      expect(intentProperties[key], `legacy 字段 ${key} 不应在 intent 内`).toBeUndefined();
     }
   });
 });

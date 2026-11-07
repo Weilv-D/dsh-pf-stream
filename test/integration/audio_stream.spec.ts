@@ -88,6 +88,18 @@ describe('A7 Epoch 冷区台词保留', () => {
     );
     expect(first.packets.length).toBeGreaterThan(0);
 
+    // 新包的台词提示行必须紧跟该包的时序提示行，而不是集中追加在末尾
+    const audioLines = first.hintLines
+      .map((line, index) => ({ line, index }))
+      .filter(({ line }) => line.startsWith('Audio @Packet #'));
+    expect(audioLines.length).toBeGreaterThan(0);
+    for (const { line, index } of audioLines) {
+      const packetId = /^Audio @Packet #(\d+):/.exec(line)?.[1];
+      expect(packetId).toBeDefined();
+      expect(index).toBeGreaterThan(0);
+      expect(first.hintLines[index - 1]).toContain(`[Packet #${packetId} |`);
+    }
+
     const second = await runStreamCallFixture(
       'case_audio_long.mp4',
       'a7',

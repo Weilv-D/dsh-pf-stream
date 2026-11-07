@@ -328,17 +328,14 @@ async function runStreamCallLocked(
     }
   }
   // 增量提示行与 result.packets 同序 1:1（采样器每次 push 相邻执行）；
-  // 仅保留预检后仍在输出的增量包提示行
+  // 仅保留预检后仍在输出的增量包，并让台词行紧跟对应包，保持上下文局部性
   result.packets.forEach((artifact, i) => {
     const line = result.hintLines[i];
-    if (line !== undefined && newIdSet.has(artifact.packet.packetId)) keptHintLines.push(line);
+    if (line === undefined || !newIdSet.has(artifact.packet.packetId)) return;
+    keptHintLines.push(line);
+    const mount = newMounts.get(artifact.packet.packetId);
+    if (mount) keptHintLines.push(audioHintLine(artifact.packet.packetId, mount));
   });
-  // 台词行紧跟对应增量包提示行（时序）
-  for (const it of precheck.kept) {
-    if (it.kind !== 'new') continue;
-    const mount = newMounts.get(it.artifact.packet.packetId);
-    if (mount) keptHintLines.push(audioHintLine(it.artifact.packet.packetId, mount));
-  }
 
   // 冷区引用的台词挂载（Epoch 内 100% 保留）
   const audioByPacket: Record<number, PacketAudioMount> = {};

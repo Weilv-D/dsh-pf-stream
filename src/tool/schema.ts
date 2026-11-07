@@ -21,7 +21,7 @@ export const INTENT_DESCRIPTION =
   '3) 均匀步长抽帧传 action=\'uniform\' 与 interval_ms/frame_count；' +
   "4) 仅探测视频元数据传 action='probe'；" +
   '5) 局部区域聚焦或放大传归一化 roi_hint；' +
-  "6) 台词与字幕传 audio（extract_subtitles 全片字幕导航，language 指定 ASR 语言）。";
+  "6) 台词与字幕传 audio（probe 时 extract_subtitles 返回全片字幕导航；language 指定 ASR 语言）。";
 
 /** 宿主 dsh-tools assertSupportedJsonSchema 允许的关键字子集内的值 schema。 */
 export interface ValueSchema {
@@ -50,7 +50,7 @@ export const intentValueSchema: ValueSchema = {
     action: { type: 'string', enum: ['pf_stream', 'timestamps', 'uniform', 'probe'] },
     mode: { type: 'string', enum: ['dense', 'standard', 'sparse'] },
     focus: { type: 'string', enum: ['motion', 'detail', 'balanced'] },
-    pts_window: { type: 'array', items: { type: 'number' }, description: '处理时间窗 [start_ms, end_ms]（PTS 域）；跨度建议 ≤240s，跨度过大时会在单次墙钟上限处提前停止（stopReason=wall_clock）' },
+    pts_window: { type: 'array', items: { type: 'number' }, description: '处理时间窗 [start_ms, end_ms]（PTS 域）；跨度建议 ≤240s，跨度过大时会在单次墙钟上限处提前停止（telemetry.stopReason="wall_clock"）' },
     timestamps_ms: { type: 'array', items: { type: 'number' }, description: '确定性抽帧时间戳列表（毫秒）；数量上限 maxFrames（默认 128），超出报错请分段' },
     interval_ms: { type: 'number', description: '均匀抽帧间隔（毫秒）' },
     frame_count: { type: 'number', description: '均匀抽帧目标总帧数' },
@@ -136,21 +136,43 @@ export const toolParameters: ParameterRootSchema = {
 export const TOOL_DESCRIPTION =
   'Look at a local video: adaptive dual-scale streaming perception (low-token P units during motion, ' +
   'high-detail F units at settle) plus deterministic inspection (probe metadata, exact-timestamp frames, ' +
-  'uniform slicing, RoI zoom). All canvases are 42px-grid aligned and billed as r*(c+1)+2 vision tokens. ' +
-  'Usage: call action="probe" first on a new video. Parameters may be supplied at the top level or inside ' +
-  'intent; values inside intent take precedence. Default action="pf_stream" for continuous content ' +
+  'uniform slicing, RoI zoom). All canvases are 42px-grid aligned and budgeted as r*(c+1)+2 vision tokens. ' +
+  'Usage: use action="probe" only for metadata or subtitles; for visual questions call action="pf_stream" ' +
+  'directly (it probes internally). Standard action fields (action, mode, focus, pts_window, timestamps_ms, ' +
+  'interval_ms, frame_count, roi_hint, full_frame, max_packets, max_tokens_budget, reset, audio) may be ' +
+  'supplied at the top level or inside intent; values inside intent take precedence. video_path and legacy ' +
+  'aliases (start_time, end_time, time_range, timestamps, fps, interval, num_frames, crop, bbox, roi, ' +
+  'probe_only) are top-level only. Default action="pf_stream" for continuous content ' +
   '(focus="detail" for text or object details, focus="motion" for actions or camera movement, ' +
   'mode="dense"/"sparse" for more or fewer process frames). ' +
   'Streaming canvases contain low-resolution process units and key freeze frames: before answering ' +
   'questions about text, numbers, or small objects, verify the target time with action="timestamps" ' +
   'and roi_hint. Pass pts_window (ms) to inspect one segment (keep spans ≤240s; very long spans stop ' +
-  'at the per-call wall-clock limit with stopReason=wall_clock); use action="uniform" with interval_ms ' +
-  'or frame_count for an even overview. Repeat streaming calls resume from the last position, so a ' +
-  'long video can be viewed in segments. Cite packet IDs, unit IDs, and timestamps from the returned ' +
+  'at the per-call wall-clock limit with telemetry.stopReason="wall_clock"); use action="uniform" with ' +
+  'interval_ms or frame_count for an even overview. Repeat streaming calls resume from the last position, ' +
+  'so a long video can be viewed in segments. Cite packet IDs, unit IDs, and timestamps from the returned ' +
   'hint lines as evidence. When audio context is available, transcript segments are mounted on packets as ' +
   '"Audio" hint lines; cite them with their timestamps for spoken content.';
 
-/** 输出 schema：随各里程碑交付逐步收紧，当前为对象根。 */
+/** 输出 schema：声明 agent 可依赖的顶层字段；packets 保留对象根，避免把内部
+ * PNG Buffer 载体写进契约。宿主按保守关键字子集校验，未知字段仍可透传。 */
 export const toolOutputSchema = {
   type: 'object',
+  properties: {
+    action: { type: 'string', enum: ['probe', 'pf_stream', 'timestamps', 'uniform'] },
+    probe: { type: 'object', description: 'probe 元数据（时长、分辨率、音轨等）' },
+    packets: {
+      type: 'array',
+      items: { type: 'object' },
+      description: '画布包元数据；每包的 image 字段对应一个 image 内容块',
+    },
+    hintLines: { type: 'array', items: { type: 'string' }, description: '时序、音频与截断提示行' },
+    heartbeats: { type: 'array', items: { type: 'object' }, description: '长任务进度心跳' },
+    telemetry: { type: 'object', description: '解码、预算与 precheck 遥测；含 stopReason' },
+    audio: { type: 'object', description: '音频侧车状态、来源与计数' },
+    session: { type: 'object', description: '会话意图标识' },
+    subtitles: { type: 'object', description: 'probe 在 extract_subtitles 时的全片字幕导航' },
+  },
+  required: ['action'],
+  additionalProperties: true,
 } as const;
