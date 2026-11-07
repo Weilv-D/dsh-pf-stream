@@ -10,6 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   SESSION_DOMAIN_SPEC,
+  ensureSessionPersistenceReady,
   initSessionPersistence,
   persistSession,
   restoreSessionIfAbsent,
@@ -18,8 +19,11 @@ import {
   shutdownSessionPersistence,
 } from '../../../src/session/persistence.js';
 import {
+  SESSION_MEMORY_LIMIT,
   createSessionState,
+  exportSessionSnapshot,
   fingerprintOf,
+  getSessionState,
   getVideoSlot,
   peekSessionState,
   resetMemorySessions,
@@ -102,12 +106,30 @@ describe('降级链', () => {
     expect(restoreSessionIfAbsent('s1')).toBe(false);
   });
 
-  it('open 失败：init false + 一次告警；同生命周期不重试', async () => {
+  it('open 失败：init false + 一次告警；冷却期内不重试', async () => {
     const facility = makeFakeFacility(new FakeTable(), { failOpen: 'backend-not-found' });
     expect(await initSessionPersistence(facility, { warn: (m) => warnLog.push(m) })).toBe(false);
     expect(await initSessionPersistence(facility)).toBe(false);
+    expect(await ensureSessionPersistenceReady()).toBe(false);
     expect(facility.openCalls).toBe(1);
     expect(warnLog.some((m) => m.includes('落盘已停用'))).toBe(true);
+  });
+
+  it('冷却期内换设施：新设施立即重试而非沿用旧冷却', async () => {
+    const bad = makeFakeFacility(new FakeTable(), { failOpen: 'backend-a-missing' });
+    expect(await initSessionPersistence(bad)).toBe(false);
+    const good = makeFakeFacility(new FakeTable());
+    expect(await initSessionPersistence(good)).toBe(true);
+    expect(good.openCalls).toBe(1);
+  });
+
+  it('旧设施 cleanup 不关闭新设施已接管的句柄', async () => {
+    const oldFacility = makeFakeFacility(new FakeTable());
+    const newFacility = makeFakeFacility(new FakeTable());
+    await initSessionPersistence(oldFacility);
+    await initSessionPersistence(newFacility);
+    await shutdownSessionPersistence(oldFacility);
+    expect(sessionPersistenceActive()).toBe(true);
   });
 
   it('shutdown 复位失败记忆：之后可重新 init', async () => {
@@ -118,6 +140,53 @@ describe('降级链', () => {
     const ok = makeFakeFacility(new FakeTable());
     expect(await initSessionPersistence(ok)).toBe(true);
     expect(sessionPersistenceActive()).toBe(true);
+  });
+
+  it('已关闭的领域会被 ensure 丢弃并重开', async () => {
+    let closed = false;
+    const table = new FakeTable();
+    const rawGet = table.get.bind(table);
+    table.get = (key) => {
+      if (closed) {
+        const error = new Error('domain closed') as Error & { code: string };
+        error.code = 'closed';
+        throw error;
+      }
+      return rawGet(key);
+    };
+    const facility = makeFakeFacility(table);
+    const rawOpen = facility.open.bind(facility);
+    facility.open = async (spec) => {
+      closed = false;
+      return rawOpen(spec);
+    };
+    await initSessionPersistence(facility);
+    closed = true;
+    expect(await ensureSessionPersistenceReady()).toBe(true);
+    expect(facility.openCalls).toBe(2);
+  });
+
+  it('ensure 等待进行中的 open（避免首个调用抢建空会话）', async () => {
+    const table = new FakeTable();
+    let release!: (handle: unknown) => void;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let openCalls = 0;
+    const facility = {
+      async open() {
+        openCalls += 1;
+        await gate;
+        return { name: 'pf_stream_sessions', table: () => table, close: async () => {} };
+      },
+    };
+    const initPromise = initSessionPersistence(facility);
+    const ensurePromise = ensureSessionPersistenceReady();
+    expect(sessionPersistenceActive()).toBe(false);
+    release(undefined);
+    await expect(initPromise).resolves.toBe(true);
+    await expect(ensurePromise).resolves.toBe(true);
+    expect(openCalls).toBe(1);
   });
 });
 
@@ -154,6 +223,58 @@ describe('写读与恢复语义', () => {
     table.records.set('broken', { schemaVersion: 1, payload: '{not-json', savedAtMs: 1 });
     expect(restoreSessionIfAbsent('broken')).toBe(false);
     expect(peekSessionState('broken')).toBeUndefined();
+  });
+
+  it('记录键与 sessionId 不一致：拒绝恢复', async () => {
+    const table = new FakeTable();
+    await initSessionPersistence(makeFakeFacility(table));
+    table.records.set('owner-a', {
+      schemaVersion: 1,
+      sessionId: 'owner-b',
+      payload: '{}',
+      savedAtMs: 1,
+    });
+    expect(restoreSessionIfAbsent('owner-a')).toBe(false);
+    expect(peekSessionState('owner-a')).toBeUndefined();
+  });
+
+  it('payload 内 sessionId 与请求不一致：拒绝恢复', async () => {
+    const table = new FakeTable();
+    await initSessionPersistence(makeFakeFacility(table));
+    const foreign = makeState('owner-b');
+    table.records.set('owner-a', {
+      schemaVersion: 1,
+      sessionId: 'owner-a',
+      payload: exportSessionSnapshot(foreign),
+      savedAtMs: 1,
+    });
+    expect(restoreSessionIfAbsent('owner-a')).toBe(false);
+    expect(peekSessionState('owner-a')).toBeUndefined();
+  });
+
+  it('写盘遇到 closed 句柄：丢弃重开后重试一次', async () => {
+    let closed = false;
+    const table = new FakeTable();
+    const rawPut = table.put.bind(table);
+    table.put = async (key, value) => {
+      if (closed) {
+        const error = new Error('domain closed') as Error & { code: string };
+        error.code = 'closed';
+        throw error;
+      }
+      return rawPut(key, value);
+    };
+    const facility = makeFakeFacility(table);
+    const rawOpen = facility.open.bind(facility);
+    facility.open = async (spec) => {
+      closed = false;
+      return rawOpen(spec);
+    };
+    await initSessionPersistence(facility);
+    closed = true;
+    await expect(persistSession(makeState('retry-closed'))).resolves.toBe(true);
+    expect(facility.openCalls).toBe(2);
+    expect(table.records.has('retry-closed')).toBe(true);
   });
 
   it('不认识的 schemaVersion：按无快照处理（向前向后兼容）', async () => {
@@ -194,5 +315,16 @@ describe('保留上限', () => {
     expect(table.records.has('bulk-0')).toBe(false);
     expect(table.records.has('bulk-1')).toBe(false);
     expect(table.records.has('bulk-9')).toBe(true);
+  });
+});
+
+describe('内存会话上限', () => {
+  it('超过 SESSION_MEMORY_LIMIT 后淘汰最久未触达的会话', () => {
+    for (let i = 0; i < SESSION_MEMORY_LIMIT + 2; i += 1) {
+      getSessionState(`mem-${i}`);
+    }
+    expect(peekSessionState('mem-0')).toBeUndefined();
+    expect(peekSessionState('mem-1')).toBeUndefined();
+    expect(peekSessionState(`mem-${SESSION_MEMORY_LIMIT + 1}`)).toBeDefined();
   });
 });

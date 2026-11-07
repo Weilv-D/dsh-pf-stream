@@ -187,7 +187,7 @@ pnpm verify:host
 pnpm check:package
 ```
 
-The host half provides the `dsh-pf-stream` tool (`probe` / `pf_stream` / `timestamps` / `uniform`), the audio sidecar, the local engine installer, and the settings API. The client half is `client.js`, which registers the config panel and the setup card on the plugin detail page. The only runtime dependency is `pngjs`.
+The host half provides the `dsh-pf-stream` tool (`probe` / `pf_stream` / `timestamps` / `uniform`), the audio sidecar, the local engine installer, and the settings API. The client half is `client.js`, which registers the config panel and the setup card on the plugin detail page. The only runtime dependencies are `pngjs` and `zod`.
 
 Configuration is written through `ctx.configEditor.edit()`, which keeps fields the user did not touch; keys live in `ctx.credentials`, and the config file only holds a reference.
 

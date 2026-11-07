@@ -1,4 +1,4 @@
-// 发布后验证：直查 registry 元数据，确认版本存在且 latest 指向该版本。
+// 发布后验证：直查 registry 元数据，确认版本存在且 latest 已到达/超过该版本。
 // 用法：node scripts/verify-release.mjs <version>
 // 退出码：0=通过；1=观察窗口内未通过。
 const version = process.argv[2];
@@ -20,9 +20,25 @@ function intervalFor(i) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function fetchMeta() {
-  const res = await fetch(REGISTRY, { cache: 'no-store' });
+  // 单次请求必须有上限：挂死的 TCP 连接不能拖到 job 级 timeout 才收口。
+  const res = await fetch(REGISTRY, {
+    cache: 'no-store',
+    signal: AbortSignal.timeout(5_000),
+  });
   if (!res.ok) throw new Error(`registry 返回 HTTP ${res.status}`);
   return res.json();
+}
+
+/** latest 是否已到达/超过目标版本（并发发布更高版本时不应误报失败）。 */
+function isAtLeast(latest, target) {
+  const parse = (value) => {
+    const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value);
+    return match ? match.slice(1).map(Number) : undefined;
+  };
+  const a = parse(latest);
+  const b = parse(target);
+  if (a === undefined || b === undefined) return latest === target;
+  return a[0] > b[0] || (a[0] === b[0] && (a[1] > b[1] || (a[1] === b[1] && a[2] >= b[2])));
 }
 
 let last = '尚未查询';
@@ -32,11 +48,12 @@ for (let i = 1; i <= ATTEMPTS; i++) {
     const meta = await fetchMeta();
     const present = Boolean(meta.versions?.[version]);
     const latest = meta['dist-tags']?.latest ?? '(无)';
+    const latestOk = latest !== '(无)' && isAtLeast(latest, version);
     const publishedAt = meta.time?.[version] ?? 'n/a';
-    last = `version=${present} latest=${latest} published=${publishedAt}`;
+    last = `version=${present} latest=${latest} latestOk=${latestOk} published=${publishedAt}`;
     console.log(`第 ${i} 次查询：${last}`);
-    if (present && latest === version) {
-      console.log(`通过：dsh-pf-stream@${version} 已发布，latest 指向该版本。`);
+    if (present && latestOk) {
+      console.log(`通过：dsh-pf-stream@${version} 已发布，latest 已到达该版本。`);
       process.exit(0);
     }
   } catch (e) {

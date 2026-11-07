@@ -2,8 +2,9 @@
  * 会话状态（SessionState / StreamCursor / LRU 管理）。
  *
  * LRU 上限（2 个视频/会话）：每视频驻留状态约 1MB 量级
- * （单槽位擂台图 ~450KB + 待发 P 队列），会话内存占用有界。
- * M2 为进程内内存态；持久层（storageDomain）在 M4 接入（ADR-005）。
+ * （单槽位擂台图 ~450KB + 待发 P 队列），单会话内存占用有界；
+ * 进程内会话总数另有 SESSION_MEMORY_LIMIT 上限（超出淘汰最久未触达的会话）。
+ * 会话状态默认内存态；持久层（storageDomain）由 src/session/persistence.ts 接入。
  */
 
 import { createHash } from 'node:crypto';
@@ -98,21 +99,35 @@ export function getVideoSlot(state: SessionState, fingerprint: VideoFingerprint)
   return slot;
 }
 
-/** M2 进程内会话存储（key = sessionId）；M4 换 storageDomain 持久层。 */
+/** 进程内会话总数上限（防止长进程/多会话无限累积）。 */
+export const SESSION_MEMORY_LIMIT = 16;
+
+/** 进程内会话存储（key = sessionId）；Map 尾部 = 最近触达。 */
 const memorySessions = new Map<string, SessionState>();
+
+/** 把会话移到 Map 尾部并淘汰超出上限的最旧会话。 */
+function touchMemorySession(state: SessionState): void {
+  memorySessions.delete(state.sessionId);
+  memorySessions.set(state.sessionId, state);
+  while (memorySessions.size > SESSION_MEMORY_LIMIT) {
+    const oldest = memorySessions.keys().next().value;
+    if (oldest == null) break;
+    memorySessions.delete(oldest);
+  }
+}
 
 export function getSessionState(sessionId: string): SessionState {
   let state = memorySessions.get(sessionId);
-  if (!state) {
-    state = createSessionState(sessionId);
-    memorySessions.set(sessionId, state);
-  }
+  if (!state) state = createSessionState(sessionId);
+  touchMemorySession(state);
   return state;
 }
 
 /** 读取会话状态（不存在返回 undefined，不创建）。 */
 export function peekSessionState(sessionId: string): SessionState | undefined {
-  return memorySessions.get(sessionId);
+  const state = memorySessions.get(sessionId);
+  if (state !== undefined) touchMemorySession(state);
+  return state;
 }
 
 /** 测试辅助：清空进程内会话存储。 */
@@ -122,7 +137,7 @@ export function resetMemorySessions(): void {
 
 /** 测试辅助：将重建的会话状态放回进程内存储（importSessionSnapshot 配套）。 */
 export function setMemorySession(state: SessionState): void {
-  memorySessions.set(state.sessionId, state);
+  touchMemorySession(state);
 }
 
 // ---------------------------------------------------------------------------
@@ -247,8 +262,18 @@ export function exportSessionSnapshot(state: SessionState): string {
 
 /** 从快照重建会话状态（exportSessionSnapshot 的逆操作）。 */
 export function importSessionSnapshot(json: string): SessionState {
-  const doc = JSON.parse(json) as SnapshotDoc;
+  const parsed: unknown = JSON.parse(json);
+  if (parsed === null || typeof parsed !== 'object') {
+    throw new Error('会话快照不是对象');
+  }
+  const doc = parsed as SnapshotDoc;
   if (doc.version !== 1) throw new Error(`不支持的会话快照版本：${doc.version}`);
+  if (typeof doc.sessionId !== 'string' || doc.sessionId.length === 0) {
+    throw new Error('会话快照缺少有效 sessionId');
+  }
+  if (!Array.isArray(doc.fUnitCache) || !Array.isArray(doc.videos)) {
+    throw new Error('会话快照的 fUnitCache/videos 不是数组');
+  }
   const state = createSessionState(doc.sessionId);
   state.intent = doc.intent;
   state.globalUnitSeq = doc.globalUnitSeq;

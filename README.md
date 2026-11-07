@@ -187,7 +187,7 @@ pnpm verify:host
 pnpm check:package
 ```
 
-Host 半提供工具 `dsh-pf-stream`（`probe` / `pf_stream` / `timestamps` / `uniform`）、音频边车、本地引擎安装器与设置接口；Client 半是 `client.js`，在插件详情页注册配置面板与引导卡片。运行时依赖只有 `pngjs`。
+Host 半提供工具 `dsh-pf-stream`（`probe` / `pf_stream` / `timestamps` / `uniform`）、音频边车、本地引擎安装器与设置接口；Client 半是 `client.js`，在插件详情页注册配置面板与引导卡片。运行时依赖只有 `pngjs` 与 `zod`。
 
 配置通过 `ctx.configEditor.edit()` 写入，保留用户未触碰的字段；密钥通过 `ctx.credentials` 存取，配置文件只保留引用。
 

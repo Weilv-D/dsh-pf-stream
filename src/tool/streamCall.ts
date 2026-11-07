@@ -22,7 +22,11 @@ import {
 } from '../stage6/precheck.js';
 import { baselinesFromIntent, mergeSessionIntent, sessionIntentChanged } from '../stage5/intent.js';
 import { fingerprintOf, getSessionState, getVideoSlot } from '../session/state.js';
-import { persistSession, restoreSessionIfAbsent } from '../session/persistence.js';
+import {
+  ensureSessionPersistenceReady,
+  persistSession,
+  restoreSessionIfAbsent,
+} from '../session/persistence.js';
 import type { IntentDirective, ProbeResult } from '../types.js';
 import {
   audioHintLine,
@@ -129,8 +133,10 @@ async function runStreamCallLocked(
   sessionId: string,
   options: StreamCallOptions,
 ): Promise<StreamCallResult> {
-  // 落盘恢复先于内存访问（会话不存在时从 storageDomain 快照重建）；
-  // 在 per-session 串行锁内执行，与同会话的落盘写入天然互斥。
+  // 先等待领域就绪（apply 里的 open 是异步的，首个调用可能早于它完成；
+  // 若此处不等，恢复会因 domain 尚未赋值而落空，随后用空游标覆盖旧快照）。
+  // 恢复与写入都在 per-session 串行锁内，与同会话落盘天然互斥。
+  await ensureSessionPersistenceReady();
   restoreSessionIfAbsent(sessionId);
   const session = getSessionState(sessionId);
   const fingerprint = fingerprintOf(videoPath);

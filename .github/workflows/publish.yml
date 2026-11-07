@@ -142,10 +142,19 @@ jobs:
       - name: 发布 tarball（Trusted Publishing + provenance）
         run: |
           VERSION="${{ needs.guard.outputs.version }}"
-          if curl -sf "https://registry.npmjs.org/dsh-pf-stream/$VERSION" > /dev/null; then
+          REGISTRY_VERSION="https://registry.npmjs.org/dsh-pf-stream/$VERSION"
+          if curl -sf --max-time 15 "$REGISTRY_VERSION" > /dev/null; then
             echo "registry 已存在 $VERSION，跳过发布（workflow 重跑幂等）"
+          elif npm publish "./pkg/dsh-pf-stream-$VERSION.tgz" --provenance; then
+            echo "已发布 $VERSION"
           else
-            npm publish "./pkg/dsh-pf-stream-$VERSION.tgz" --provenance
+            status=$?
+            echo "npm publish 失败（退出码 $status），复查 registry 是否其实已发布..."
+            if curl -sf --max-time 15 "$REGISTRY_VERSION" > /dev/null; then
+              echo "registry 已存在 $VERSION：按已发布继续（传播延迟导致的首查 404）"
+            else
+              exit "$status"
+            fi
           fi
 
       - name: 发布后验证

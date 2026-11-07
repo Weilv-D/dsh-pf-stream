@@ -42,7 +42,11 @@ import {
   type WebServerService,
 } from './host/runtime.js';
 import { registerApi } from './host/api.js';
-import { initSessionPersistence, shutdownSessionPersistence } from './session/persistence.js';
+import {
+  initSessionPersistence,
+  setSessionPersistenceLogger,
+  shutdownSessionPersistence,
+} from './session/persistence.js';
 
 export const name = 'dsh-pf-stream';
 
@@ -311,33 +315,62 @@ export function apply(ctx: Context, config: PfStreamPluginConfig) {
   const host = ctx as HostContext;
   const services: HostServices = {};
   const runtime = new HostRuntime(() => config, services);
-  const dispose = host.tools.register(buildToolDefinition({ ctx: host, config, runtime }));
+  const logWarn = (message: string, error?: unknown): void => {
+    try {
+      const lg = (host as unknown as { logger?: { warn?: (m: string) => void } }).logger;
+      const detail =
+        error === undefined
+          ? ''
+          : `：${error instanceof Error ? error.message : String(error)}`;
+      lg?.warn?.(`[dsh-pf-stream] ${message}${detail}`);
+    } catch {
+      // 日志不可用不影响业务
+    }
+  };
+
+  // 落盘模块的日志出口与配置解耦：即使设施一直不出现，也能在首次需要落盘时
+  // 给出一次「设施不可用」告警（而不是静默降级）。
+  setSessionPersistenceLogger(config.persistSessionState ? { warn: (m) => logWarn(m) } : undefined);
+
+  // 工具注册：tools.register 自身挂在调用方 fiber 上；这里再显式登记一次，
+  // 保证卸载时 disposer 幂等执行（不依赖已废弃的 'dispose' 事件）。
+  const disposeTools = host.tools.register(buildToolDefinition({ ctx: host, config, runtime }));
+  ctx.effect(() => disposeTools);
 
   // 设置页路由与配置/密钥服务都是可选依赖：宿主没有 webServer 时插件照常工作，
   // 只是页面里的自助操作不可用（配置仍可走 cordis.patch.yml）。
-  const disposers: Array<() => void> = [];
+  // cordis 的 inject 返回 Fiber（不是 disposer 函数）；清理必须用 scoped.effect。
   const injectOptional = (deps: string[], run: (scoped: Context) => void): void => {
     try {
-      const off = (host as unknown as {
-        inject(deps: string[], callback: (scoped: Context) => void): () => void;
+      (host as unknown as {
+        inject(deps: string[], callback: (scoped: Context) => void): unknown;
       }).inject(deps, (scoped) => {
         try {
           run(scoped);
-        } catch {
-          // 单个可选服务接线失败不应影响感知工具
+        } catch (error) {
+          logWarn(`可选服务 ${deps.join('/')} 接线失败`, error);
         }
       });
-      if (typeof off === 'function') disposers.push(off);
-    } catch {
-      // 宿主版本不支持 inject 回调时忽略可选接线
+    } catch (error) {
+      logWarn(`可选服务 ${deps.join('/')} 注入失败`, error);
     }
   };
 
   injectOptional(['webServer'], (scoped) => {
     const webServer = scoped.get('webServer') as unknown as WebServerService | undefined;
     if (webServer === undefined || typeof webServer.register !== 'function') return;
-    services.webServer = webServer;
-    disposers.push(registerApi({ runtime, webServer }));
+    scoped.effect(() => {
+      const off = registerApi({ runtime, webServer });
+      services.webServer = webServer;
+      return () => {
+        try {
+          off();
+        } catch {
+          // 卸载期清理失败不再抛出
+        }
+        if (services.webServer === webServer) services.webServer = undefined;
+      };
+    });
   });
   injectOptional(['credentials'], (scoped) => {
     const credentials = scoped.get('credentials') as unknown as CredentialsService | undefined;
@@ -345,50 +378,45 @@ export function apply(ctx: Context, config: PfStreamPluginConfig) {
     services.credentials = credentials;
     runtime.invalidate();
     void runtime.refresh();
+    scoped.effect(() => () => {
+      if (services.credentials === credentials) services.credentials = undefined;
+      runtime.invalidate();
+    });
   });
   injectOptional(['configEditor'], (scoped) => {
     const configEditor = scoped.get('configEditor') as unknown as ConfigEditorService | undefined;
     if (configEditor === undefined || typeof configEditor.edit !== 'function') return;
     services.configEditor = configEditor;
     runtime.invalidate();
+    scoped.effect(() => () => {
+      if (services.configEditor === configEditor) services.configEditor = undefined;
+      runtime.invalidate();
+    });
   });
+
   // 可选落盘设施：宿主提供 ctx.storageDomain 且配置未关闭时打开会话领域；
-  // open 失败降级内存态（persistence 模块内一次性告警）。设施若在插件存活期
-  // 被宿主卸载，其打开的领域会随之关闭，此后落盘操作静默降级（restore 返回
-  // false、persist 告警），不阻塞感知调用。
+  // open 失败/设施消失时降级内存态（persistence 模块内按冷却期重试并告警）。
+  // 领域句柄由本插件持有，因此用 scoped.effect 登记 close：facility 消失或插件
+  // 卸载时都会走到这里，不需要宿主发 'dispose' 事件。
   injectOptional(['storageDomain'], (scoped) => {
     if (!config.persistSessionState) return;
     const facility = scoped.get('storageDomain') as unknown;
-    if (facility === undefined || facility === null) return;
-    const logWarn = (message: string): void => {
-      try {
-        const lg = (host as unknown as { logger?: { warn?: (m: string) => void } }).logger;
-        lg?.warn?.(`[dsh-pf-stream] ${message}`);
-      } catch {
-        // 日志不可用不影响落盘
-      }
-    };
-    void initSessionPersistence(facility as Parameters<typeof initSessionPersistence>[0], { warn: logWarn });
+    if (facility === undefined || facility === null) {
+      logWarn('storageDomain 设施不可用，会话状态落盘已停用（仅内存态）');
+      return;
+    }
+    scoped.effect(() => {
+      void initSessionPersistence(facility as Parameters<typeof initSessionPersistence>[0], {
+        warn: (message) => logWarn(message),
+      });
+      return () => {
+        void shutdownSessionPersistence(
+          facility as Parameters<typeof shutdownSessionPersistence>[0],
+        );
+      };
+    });
   });
 
   // 预热密钥与探测结果，工具首次调用即可拿到正确快照。
   void runtime.refresh();
-
-  // register 返回的 disposer 为主注销路径；'dispose' 事件为兜底
-  // （经 events 服务注册，事件名不受 keyof Events 约束）。
-  ctx.events.on('dispose', () => {
-    void shutdownSessionPersistence();
-    for (const off of disposers.splice(0)) {
-      try {
-        off();
-      } catch {
-        // 卸载期清理失败不再抛出
-      }
-    }
-    try {
-      dispose();
-    } catch {
-      // 卸载期清理失败不再抛出
-    }
-  });
 }
