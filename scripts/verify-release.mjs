@@ -8,8 +8,14 @@ if (!version) {
 }
 
 const REGISTRY = 'https://registry.npmjs.org/dsh-pf-stream';
-const ATTEMPTS = 30;
-const INTERVAL_MS = 10_000;
+const ATTEMPTS = 43;
+// 分级轮询：正常传播 1-2 分钟内即通过；0.3.4 实测 Trusted Publishing 下传播
+// 可超 5 分钟，5 分钟窗口曾误报失败（发布规范 §9），故放宽到 15 分钟。
+function intervalFor(i) {
+  if (i <= 12) return 10_000;
+  if (i <= 27) return 20_000;
+  return 30_000;
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -21,7 +27,7 @@ async function fetchMeta() {
 
 let last = '尚未查询';
 for (let i = 1; i <= ATTEMPTS; i++) {
-  await sleep(INTERVAL_MS);
+  await sleep(intervalFor(i));
   try {
     const meta = await fetchMeta();
     const present = Boolean(meta.versions?.[version]);
