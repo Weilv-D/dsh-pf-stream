@@ -154,13 +154,15 @@ Dual-tone separator lines block edge-feature crosstalk between units. With `rend
 | Option | Default | Description |
 | --- | --- | --- |
 | `renderVisualId` | `true` | Inverted superpixel unit badges |
-| `maxPacketsPerCall` | `64` | Canvas packet limit per call |
+| `maxPacketsPerCall` | `20` | Canvas packet limit per call (aligned with the host's 20-image limit) |
 | `maxFramesPerCall` | `128` | Deterministic frame extraction limit per call |
 | `maxImagesPerCall` | `20` | Image blocks per call (host limit is 20 per message) |
 | `maxTokensBudgetPerCall` | `65536` | Vision token budget per call |
+| `maxWallClockMsPerCall` | `720000` | Wall-clock limit for decode progress per call (ms); long windows stop with `wall_clock` before the client's 900 s timeout |
 | `maxRequestBytes` | `56 MiB` | Request byte soft limit (includes Base64 growth and protocol overhead) |
 | `maxColdRefs` | `4` | Cold-zone reference limit |
 | `telemetryEnabled` | `true` | Telemetry fields on/off |
+| `persistSessionState` | `true` | Persist session state through the host `storageDomain` (resume after restart; fall back to memory when unavailable) |
 | `ffmpegPath` | auto-detected | ffmpeg executable path |
 | `ffprobePath` | auto-detected | ffprobe executable path |
 | `tempDir` | OS temp dir | Temporary file directory |
@@ -175,6 +177,7 @@ Dual-tone separator lines block edge-feature crosstalk between units. With `rend
 | `audio.cacheDir` | `~/.dsh/cache/dsh-pf-stream` | Root for transcript cache, models and engines (reused per file fingerprint) |
 | `audio.graceMs` | `60000` | Transcription soft deadline (ms); visual results return first on timeout |
 | `audio.asr.engine` | `auto` | `auto` / `local` / `cloud` / `host` / `off` / `legacy` |
+| `audio.asr.provider` | `none` | Legacy switch (`openai_verbose` / `openai_basic` / `local_cli`); 0.2.x compatibility only, prefer `engine` |
 | `audio.asr.preset` | `openai` | Cloud preset: `openai` / `groq` / `custom` |
 | `audio.asr.baseUrl` | per preset | Cloud endpoint (OpenAI-compatible) |
 | `audio.asr.model` | per preset | Cloud model name; executable path for `local_cli` |
@@ -185,7 +188,6 @@ Dual-tone separator lines block edge-feature crosstalk between units. With `rend
 | `audio.asr.local.modelId` | `small-q5_1` | Managed model: `base-q5_1` / `small-q5_1` / `medium-q5_0` |
 | `audio.asr.local.threads` | `0` | CPU threads; `0` lets the engine decide (cap 16) |
 | `audio.asr.local.timeoutMs` | `300000` | Per-chunk local transcription timeout |
-| `audio.asr.provider` | `none` | Legacy switch; prefer `engine` |
 | `audio.asr.args` | per engine | Advanced `local_cli` template. Tokens: `{audio}`, `{out}`, `{outbase}` (whisper.cpp `-of`), `{dir}` |
 | `audio.asr.timeoutMs` | `8000` | Per-chunk cloud transcription timeout |
 | `audio.asr.maxConcurrency` | `2` | Concurrency for long-audio chunked transcription |
@@ -214,7 +216,7 @@ Local transcription is timed per chunk; raise `audio.asr.local.timeoutMs` (and `
 
 | Prefix | Meaning |
 | --- | --- |
-| `PFSTREAM_ARGS_*` | Argument validation failures (`VIDEO_PATH` / `ACTION` / `MODE` / `FOCUS` / `WINDOW` / `TIMESTAMPS` / `INTERVAL` / `FRAME_COUNT` / `PTS` / `ROI`) |
+| `PFSTREAM_ARGS_*` | Argument validation failures (`VIDEO_PATH` / `ACTION` / `MODE` / `FOCUS` / `WINDOW` / `TIMESTAMPS` / `INTERVAL` / `FRAME_COUNT` / `PTS` / `ROI` / `AUDIO`) |
 | `PFSTREAM_PROBE_NOT_FOUND` | Video path missing or not a regular file |
 | `PFSTREAM_PROBE_NO_VIDEO` | No video stream in the container |
 | `PFSTREAM_PROBE_FAILED` | Media probing failed (includes damaged containers) |

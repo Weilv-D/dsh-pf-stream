@@ -116,7 +116,7 @@ If `@deepseek-ai/dsh-experimental-voice-input-bundle` is installed and enabled, 
 2. Paste the API key and click "Save". After saving, only "Configured" is shown; the key is never echoed back.
 3. Click "Test transcription" to verify the key and network.
 
-> **Auto policy**: cloud is used when key, endpoint and model are all set (faster, billed per use); otherwise the official voice-input model when ready; otherwise the local engine. The badge next to the panel title shows the engine in use, such as "Transcription ready · Cloud" or "Transcription ready · Official voice". Under "Advanced" you can switch to local only, cloud only, official voice only, or off.
+> **Auto policy**: cloud is used when key, endpoint and model are all set (faster, billed per use); otherwise the official voice-input model when ready; otherwise the local engine. The badge next to the panel title shows the engine in use, such as "Transcription ready · Cloud" or "Transcription ready · Official voice". Under "Advanced" you can switch to local only, cloud only, official voice only, or off; a separate "legacy provider passthrough" option exists only for 0.2.x compatibility.
 
 ## Use it
 
@@ -163,7 +163,7 @@ Beyond streaming, four deterministic paths are provided: `probe` parses containe
 
 ### Cascaded speech sources
 
-Speech text is obtained through a three-stage cascade: a sidecar `.srt` / `.vtt` is read first, then embedded soft subtitles; without subtitles, silence detection and a speech-ratio estimate run, and an all-silent video skips transcription; finally ASR runs, using local whisper.cpp, the SenseVoice model from the official voice-input plugin, or OpenAI / Groq / a custom compatible endpoint. Segments are aligned by PTS and mounted on the corresponding packets, stitched across block boundaries with a ±300 ms tolerance.
+Speech text is obtained through a three-stage cascade: subtitles first (a sidecar `.srt` / `.vtt`, then embedded soft subtitles); without subtitles, acoustic VAD runs (silence detection plus a speech-ratio estimate; an all-silent video skips transcription); finally ASR runs, using local whisper.cpp, the SenseVoice model from the official voice-input plugin, or OpenAI / Groq / a custom compatible endpoint. Segments are aligned by PTS and mounted on the corresponding packets, stitched across block boundaries with a ±300 ms tolerance.
 
 The default policy is vision-first with background transcription: once a call exceeds the soft deadline (`graceMs`, 60 s by default), the visual result returns and transcription continues in the background; later calls on the same video hit the disk cache.
 
