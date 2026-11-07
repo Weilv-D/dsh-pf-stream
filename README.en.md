@@ -79,9 +79,9 @@ The transcription engine decides whether videos without subtitles get speech tex
 
 To open the settings: **Plugins in the left sidebar → Video understanding → the panel below the description**. Use the same path later to change settings.
 
-<p><img src="https://raw.githubusercontent.com/Weilv-D/dsh-pf-stream/main/docs/assets/panel.png" width="720" alt="Transcription settings panel on the plugin detail page: decoder, local transcription and cloud transcription cards"></p>
+<p><img src="https://raw.githubusercontent.com/Weilv-D/dsh-pf-stream/main/docs/assets/panel.png" width="720" alt="Transcription settings panel on the plugin detail page: decoder, local transcription, cloud transcription, and official voice input status cards"></p>
 
-Three cards at the top report video decode (ffmpeg), local transcription, and cloud transcription. When the official voice-input plugin is installed, a fourth "Official voice input" card appears. Pick one path:
+Up to four cards at the top report video decode (ffmpeg), local transcription, cloud transcription, and official voice input. The fourth card appears only when the official voice-input plugin is installed. Pick one path:
 
 | Path | Best for | What to do |
 | :--- | :--- | :--- |
