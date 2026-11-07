@@ -151,6 +151,82 @@ describe('adaptCallArgs：归一化 + 校验 + 钳制', () => {
     );
     expect(intent.pts_window).toEqual([0, 3966.67]);
   });
+
+  it('顶层 intent 别名生效（action/mode/focus/pts_window/max_packets/roi/full_frame）', () => {
+    const { intent } = adaptCallArgs(
+      {
+        video_path: 'v.mp4',
+        action: 'pf_stream',
+        mode: 'sparse',
+        focus: 'detail',
+        pts_window: [1000, 2000],
+        max_packets: 3,
+        roi_hint: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+        full_frame: true,
+      },
+      LIMITS,
+    );
+    expect(intent).toMatchObject({
+      action: 'pf_stream',
+      mode: 'sparse',
+      focus: 'detail',
+      pts_window: [1000, 2000],
+      max_packets: 3,
+      roi_hint: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+      full_frame: true,
+    });
+  });
+
+  it('intent 内字段优先于同名的顶层字段', () => {
+    const { intent } = adaptCallArgs(
+      {
+        video_path: 'v.mp4',
+        mode: 'sparse',
+        pts_window: [0, 1000],
+        intent: { mode: 'dense', pts_window: [2000, 3000] },
+      },
+      LIMITS,
+    );
+    expect(intent.mode).toBe('dense');
+    expect(intent.pts_window).toEqual([2000, 3000]);
+  });
+
+  it('顶层 timestamps_ms / interval_ms / frame_count 生效', () => {
+    const ts = adaptCallArgs({ video_path: 'v.mp4', timestamps_ms: [100, 200] }, LIMITS);
+    expect(ts.intent.action).toBe('timestamps');
+    expect(ts.intent.timestamps_ms).toEqual([100, 200]);
+
+    const iv = adaptCallArgs({ video_path: 'v.mp4', interval_ms: 500 }, LIMITS);
+    expect(iv.intent.action).toBe('uniform');
+    expect(iv.intent.interval_ms).toBe(500);
+
+    const fc = adaptCallArgs({ video_path: 'v.mp4', frame_count: 10 }, LIMITS);
+    expect(fc.intent.action).toBe('uniform');
+    expect(fc.intent.frame_count).toBe(10);
+  });
+
+  it('顶层 audio 生效并校验 mode', () => {
+    const { intent } = adaptCallArgs(
+      {
+        video_path: 'v.mp4',
+        audio: { mode: 'off', language: ' zh-CN ', extract_subtitles: true, assist_focus: false },
+      },
+      LIMITS,
+    );
+    expect(intent.audio).toEqual({
+      mode: 'off',
+      language: 'zh-CN',
+      extract_subtitles: true,
+      assist_focus: false,
+    });
+
+    try {
+      adaptCallArgs({ video_path: 'v.mp4', audio: { mode: 'mute' } }, LIMITS);
+      expect.unreachable('应抛出 PFSTREAM_ARGS_AUDIO');
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe('PFSTREAM_ARGS_AUDIO');
+    }
+  });
 });
 
 describe('adaptCallArgs：timestamps_ms 长度上限', () => {

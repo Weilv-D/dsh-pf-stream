@@ -13,7 +13,12 @@
 import type { AsrSettings } from '../audio/types.js';
 import { buildLocalArgs, cloudPreset, LOCAL_ENGINES, modelPreset } from './catalog.js';
 import type { LocalEngineSnapshot } from './detect.js';
-import { resolveHostSpeechLanguage, type HostSpeechFacts } from './hostSpeech.js';
+import {
+  HOST_SPEECH_PROVIDER_ID,
+  probeHostSpeech,
+  resolveHostSpeechLanguage,
+  type HostSpeechFacts,
+} from './hostSpeech.js';
 
 export type AsrEngineMode = 'auto' | 'local' | 'cloud' | 'host' | 'off' | 'legacy';
 
@@ -91,20 +96,33 @@ function hostSettings(
   ) {
     return null;
   }
-  const choice = resolveHostSpeechLanguage(host.languages, language);
+  let selected = host;
+  let choice = resolveHostSpeechLanguage(selected.languages, language);
+  if (!choice.supported && selected.service !== null) {
+    // 入口 facts 可能来自状态页（不带语言）。若当前选中的 provider 不支持目标
+    // 语言，按语言重新探测，优先找另一个就绪且支持的 host-local provider。
+    const retry = probeHostSpeech(selected.service, HOST_SPEECH_PROVIDER_ID, language);
+    if (retry.ready) {
+      const retryChoice = resolveHostSpeechLanguage(retry.languages, language);
+      if (retryChoice.supported) {
+        selected = retry;
+        choice = retryChoice;
+      }
+    }
+  }
   if (!choice.supported) return null;
   return {
     provider: 'host_sensevoice',
     baseUrl: null,
-    model: host.providerId,
-    modelLabel: host.providerName,
+    model: selected.providerId,
+    modelLabel: selected.providerName,
     apiKey: null,
     language: choice.language,
     args: null,
     // 官方推理超时默认 120s；工具侧 grace 仍按 audio.graceMs 控制等待。
     timeoutMs: Math.max(config.timeoutMs, 120_000),
     maxConcurrency: 1,
-    hostService: host.service,
+    hostService: selected.service,
   };
 }
 

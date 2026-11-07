@@ -246,6 +246,47 @@ describe('引擎选择 resolveAsr', () => {
     expect(out.settings?.language).toBe('zh');
   });
 
+  it('host 首选不支持当前语言时，按语言选另一个就绪 provider', () => {
+    const service: HostSpeechService = {
+      snapshot: () => ({
+        providers: [
+          {
+            id: 'sensevoice-local',
+            name: 'English only',
+            location: 'host-local',
+            languages: ['en'],
+            preparation: { snapshot: () => ({ phase: 'ready' }) },
+          },
+          {
+            id: 'other-local',
+            name: 'Chinese ready',
+            location: 'host-local',
+            languages: ['zh'],
+            preparation: { snapshot: () => ({ phase: 'ready' }) },
+          },
+        ],
+      }),
+      resolve: () => ({}),
+      transcribe: async () => ({ text: '' }),
+    };
+    const out = resolveAsr(
+      slice({ engine: 'host' }),
+      'zh',
+      NO_ENV,
+      facts({
+        hostSpeech: hostFacts({
+          providerId: 'sensevoice-local',
+          providerName: 'English only',
+          languages: ['en'],
+          service,
+        }),
+      }),
+    );
+    expect(out.kind).toBe('host');
+    expect(out.settings?.model).toBe('other-local');
+    expect(out.settings?.language).toBe('zh');
+  });
+
   it('host 把空白语言当作省略，不把空串传给官方 resolve', () => {
     const out = resolveAsr(slice({ engine: 'host' }), '   ', NO_ENV, facts({ hostSpeech: hostFacts() }));
     expect(out.kind).toBe('host');

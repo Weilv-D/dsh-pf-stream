@@ -211,31 +211,52 @@ export function planHostChunks(
 }
 
 /**
- * ffmpeg 把 WAV 写到管道时无法回填长度，RIFF/data 的长度字段会是 0xFFFFFFFF。
- * 官方 speechToText 的 WAV 校验会拒绝这种头；在内存里按实际字节数回填。
+ * 官方 speechToText 要求 canonical 44 字节 WAV 头：`fmt ` 在 12、`data` 在 36。
+ * ffmpeg 写管道时长度字段是 0xFFFFFFFF；源音频带 metadata 时还会插入 LIST 块，
+ * 使 `data` 偏移到 36 之后。这里统一重建成 canonical 头，丢掉 LIST 等附加块。
  */
-export function patchStreamedWavHeader(bytes: Buffer): Buffer {
-  if (bytes.length < 12) return bytes;
+export function canonicalizeWav(bytes: Buffer): Buffer {
+  if (bytes.length < 44) return bytes;
   if (bytes.toString('ascii', 0, 4) !== 'RIFF' || bytes.toString('ascii', 8, 12) !== 'WAVE') {
     return bytes;
   }
-  if (bytes.readUInt32LE(4) === 0xffffffff) {
-    bytes.writeUInt32LE(bytes.length - 8, 4);
-  }
   let offset = 12;
+  let fmt: Buffer | null = null;
+  let dataOffset = -1;
+  let dataSize = 0;
   while (offset + 8 <= bytes.length) {
     const id = bytes.toString('ascii', offset, offset + 4);
     const size = bytes.readUInt32LE(offset + 4);
+    if (id === 'fmt ' && size === 16) {
+      fmt = bytes.subarray(offset + 8, offset + 24);
+    }
     if (id === 'data') {
-      if (size === 0xffffffff) {
-        bytes.writeUInt32LE(bytes.length - offset - 8, offset + 4);
-      }
+      dataOffset = offset + 8;
+      dataSize = size === 0xffffffff ? bytes.length - dataOffset : Math.min(size, bytes.length - dataOffset);
       break;
     }
     if (size === 0xffffffff) break;
     offset += 8 + size + (size & 1);
   }
-  return bytes;
+  if (!fmt || dataOffset < 0 || dataSize < 0) return bytes;
+  if (
+    dataOffset === 44 &&
+    bytes.readUInt32LE(4) === bytes.length - 8 &&
+    bytes.readUInt32LE(40) === dataSize
+  ) {
+    return bytes;
+  }
+  const out = Buffer.alloc(44 + dataSize);
+  out.write('RIFF', 0, 'ascii');
+  out.writeUInt32LE(36 + dataSize, 4);
+  out.write('WAVE', 8, 'ascii');
+  out.write('fmt ', 12, 'ascii');
+  out.writeUInt32LE(16, 16);
+  fmt.copy(out, 20);
+  out.write('data', 36, 'ascii');
+  out.writeUInt32LE(dataSize, 40);
+  bytes.copy(out, 44, dataOffset, dataOffset + dataSize);
+  return out;
 }
 
 /**
@@ -254,7 +275,7 @@ export async function sliceAudio(
     codec === 'mp3'
       ? ['-c:a', 'libmp3lame', '-q:a', '6', '-f', 'mp3']
       : codec === 'wav'
-        ? ['-c:a', 'pcm_s16le', '-fflags', '+bitexact', '-f', 'wav']
+        ? ['-map_metadata', '-1', '-c:a', 'pcm_s16le', '-fflags', '+bitexact', '-f', 'wav']
         : ['-c:a', 'libopus', '-b:a', '24k', '-f', 'ogg'];
   const { stdout } = await execFile(
     options.ffmpegPath,
@@ -271,7 +292,7 @@ export async function sliceAudio(
     { encoding: 'buffer', timeoutMs: 120_000, signal: options.signal },
   );
   return {
-    bytes: codec === 'wav' ? patchStreamedWavHeader(stdout) : stdout,
+    bytes: codec === 'wav' ? canonicalizeWav(stdout) : stdout,
     mimeType: codec === 'mp3' ? 'audio/mpeg' : codec === 'wav' ? 'audio/wav' : 'audio/ogg',
   };
 }

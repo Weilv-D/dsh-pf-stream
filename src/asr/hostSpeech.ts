@@ -89,6 +89,7 @@ function isReadyPhase(phase: string | null): boolean {
 export function probeHostSpeech(
   service: HostSpeechService | null | undefined,
   preferredProviderId = HOST_SPEECH_PROVIDER_ID,
+  language?: string | null,
 ): HostSpeechFacts {
   if (service === null || service === undefined || typeof service.snapshot !== 'function') {
     return {
@@ -126,8 +127,30 @@ export function probeHostSpeech(
   const hostProviders = hostLocalProviders.filter(
     (provider) => typeof provider.id === 'string' && provider.id.trim() !== '',
   );
+  const phases = new Map(
+    hostProviders.map((entry) => [entry, phaseOf(entry)] as const),
+  );
+  const readyProviders = hostProviders.filter((entry) => isReadyPhase(phases.get(entry) ?? null));
+  // 有目标语言时优先选择「就绪且语言精确匹配」的 provider；若一个都没有，
+  // 仍回退到就绪 provider，让 hostUnavailable 能报 host_language_unsupported，
+  // 而不是误报 host_not_ready。
+  const languageReady =
+    language === undefined || language === null
+      ? readyProviders
+      : readyProviders.filter((entry) => resolveHostSpeechLanguage(entry.languages ?? [], language).supported);
+  const candidates = languageReady.length > 0 ? languageReady : readyProviders;
+  // 官方语音输入自己的 selection 若指向 host-local provider，应尊重用户选择；
+  // 若它指向 cloud，则忽略（本插件只复用本地模型）。
+  const selectedId = snapshot.selection?.providerId?.trim();
   const provider =
-    hostProviders.find((entry) => entry.id === preferredProviderId) ?? hostProviders[0] ?? null;
+    candidates.find((entry) => selectedId !== undefined && entry.id === selectedId) ??
+    candidates.find((entry) => entry.id === preferredProviderId) ??
+    candidates[0] ??
+    // 没有 ready provider 时保留首选用于展示原因；不要因为别的 provider 未就绪而掩盖首选状态。
+    hostProviders.find((entry) => entry.id === preferredProviderId) ??
+    (selectedId === undefined ? undefined : hostProviders.find((entry) => entry.id === selectedId)) ??
+    hostProviders[0] ??
+    null;
 
   if (provider === null) {
     return {
@@ -160,7 +183,23 @@ export function probeHostSpeech(
     };
   }
 
-  const phase = phaseOf(provider);
+  // 官方 resolve 用全局 id 查 provider。若同一 id 同时存在 host-local 与 cloud
+  // provider，官方可能命中云端；这里直接拒绝歧义 id，避免音频静默上云。
+  const sameId = providers.filter((entry) => entry.id?.trim() === providerId);
+  if (sameId.length !== 1) {
+    return {
+      available: true,
+      ready: false,
+      providerId: null,
+      providerName: null,
+      phase: null,
+      languages: [],
+      reason: '官方语音输入提供方 id 重复，拒绝调用',
+      service,
+    };
+  }
+
+  const phase = phases.get(provider) ?? null;
   const languages = Array.isArray(provider.languages) ? provider.languages : [];
   const ready = isReadyPhase(phase);
   return {

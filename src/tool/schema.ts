@@ -101,12 +101,33 @@ export const legacyValueSchemas: Record<string, ValueSchema> = {
 
 /** 工具 parameters：标准 JSON Schema 根对象（register() 路径原样投影给模型）。
  * 顶层显式声明历史便捷字段（模型按 properties 生成实参，字段才能到达适配器）。 */
+const intentProperties = intentValueSchema.properties ?? {};
+
+/** 顶层 intent 字段别名：TOOL_DESCRIPTION 按顶层描述参数，模型可能不包 intent。
+ * 适配器以 intent 内字段优先、顶层次之，两处都声明可避免 Schema 与描述互相矛盾。 */
+export const flatIntentValueSchemas: Record<string, ValueSchema> = {
+  action: intentProperties['action']!,
+  mode: intentProperties['mode']!,
+  focus: intentProperties['focus']!,
+  pts_window: intentProperties['pts_window']!,
+  timestamps_ms: intentProperties['timestamps_ms']!,
+  interval_ms: intentProperties['interval_ms']!,
+  frame_count: intentProperties['frame_count']!,
+  roi_hint: intentProperties['roi_hint']!,
+  full_frame: intentProperties['full_frame']!,
+  max_packets: intentProperties['max_packets']!,
+  max_tokens_budget: intentProperties['max_tokens_budget']!,
+  reset: intentProperties['reset']!,
+  audio: intentProperties['audio']!,
+};
+
 export const toolParameters: ParameterRootSchema = {
   type: 'object',
   properties: {
     video_path: { type: 'string', description: '待处理的本地视频文件路径' },
     intent: intentValueSchema,
     ...legacyValueSchemas,
+    ...flatIntentValueSchemas,
   },
   required: ['video_path'],
   additionalProperties: false,
@@ -116,7 +137,8 @@ export const TOOL_DESCRIPTION =
   'Look at a local video: adaptive dual-scale streaming perception (low-token P units during motion, ' +
   'high-detail F units at settle) plus deterministic inspection (probe metadata, exact-timestamp frames, ' +
   'uniform slicing, RoI zoom). All canvases are 42px-grid aligned and billed as r*(c+1)+2 vision tokens. ' +
-  'Usage: call action="probe" first on a new video. Default action="pf_stream" for continuous content ' +
+  'Usage: call action="probe" first on a new video. Parameters may be supplied at the top level or inside ' +
+  'intent; values inside intent take precedence. Default action="pf_stream" for continuous content ' +
   '(focus="detail" for text or object details, focus="motion" for actions or camera movement, ' +
   'mode="dense"/"sparse" for more or fewer process frames). ' +
   'Streaming canvases contain low-resolution process units and key freeze frames: before answering ' +

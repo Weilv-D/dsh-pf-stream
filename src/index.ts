@@ -80,7 +80,9 @@ export const Config = Schema.object({
     assistFocus: Schema.boolean().default(true).description('语音停顿引导额外 F 定格'),
     sliceCodec: Schema.string().default('mp3').description('ASR 切片编码（mp3 或 opus）'),
     cacheDir: Schema.string().default(join(homedir(), '.dsh', 'cache', 'dsh-pf-stream')).description('转写缓存目录'),
-    graceMs: Schema.number().default(8000).description('音频软截止（毫秒）'),
+    graceMs: Schema.number()
+      .default(60_000)
+      .description('音频软截止（毫秒；默认 60s，需覆盖长窗口的转写时间）'),
     asr: Schema.object({
       engine: Schema.string()
         .default('auto')

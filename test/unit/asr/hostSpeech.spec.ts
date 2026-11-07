@@ -83,6 +83,90 @@ describe('probeHostSpeech', () => {
     expect(facts.phase).toBe('standby');
   });
 
+  it('首选未准备、另一个 host provider 已就绪 → 选已就绪者', () => {
+    const facts = probeHostSpeech(
+      service({
+        snapshot: () => ({
+          providers: [
+            {
+              id: 'sensevoice-local',
+              name: 'SenseVoiceSmall',
+              location: 'host-local',
+              languages: ['zh'],
+              preparation: { snapshot: () => ({ phase: 'unprepared' }) },
+            },
+            {
+              id: 'other-local',
+              name: 'Other',
+              location: 'host-local',
+              languages: ['zh'],
+              preparation: { snapshot: () => ({ phase: 'ready' }) },
+            },
+          ],
+        }),
+      }),
+    );
+    expect(facts.providerId).toBe('other-local');
+    expect(facts.ready).toBe(true);
+  });
+
+  it('官方 selection 指向 host-local 就绪 provider 时尊重该选择', () => {
+    const facts = probeHostSpeech(
+      service({
+        snapshot: () => ({
+          selection: { providerId: 'other-local' },
+          providers: [
+            {
+              id: 'sensevoice-local',
+              name: 'SenseVoiceSmall',
+              location: 'host-local',
+              languages: ['zh'],
+              preparation: { snapshot: () => ({ phase: 'ready' }) },
+            },
+            {
+              id: 'other-local',
+              name: 'Other',
+              location: 'host-local',
+              languages: ['zh'],
+              preparation: { snapshot: () => ({ phase: 'ready' }) },
+            },
+          ],
+        }),
+      }),
+    );
+    expect(facts.providerId).toBe('other-local');
+    expect(facts.ready).toBe(true);
+  });
+
+  it('有目标语言时选「就绪且支持语言」的 provider，而不是仅首选', () => {
+    const facts = probeHostSpeech(
+      service({
+        snapshot: () => ({
+          providers: [
+            {
+              id: 'sensevoice-local',
+              name: 'SenseVoiceSmall',
+              location: 'host-local',
+              languages: ['en'],
+              preparation: { snapshot: () => ({ phase: 'ready' }) },
+            },
+            {
+              id: 'other-local',
+              name: 'Other',
+              location: 'host-local',
+              languages: ['zh'],
+              preparation: { snapshot: () => ({ phase: 'ready' }) },
+            },
+          ],
+        }),
+      }),
+      'sensevoice-local',
+      'zh-CN',
+    );
+    expect(facts.providerId).toBe('other-local');
+    expect(facts.ready).toBe(true);
+  });
+
   it('没有 host-local provider → 未就绪', () => {
     const facts = probeHostSpeech(
       service({
@@ -114,6 +198,34 @@ describe('probeHostSpeech', () => {
     );
     expect(facts.providerId).toBeNull();
     expect(facts.ready).toBe(false);
+  });
+
+  it('同一 id 同时存在 host-local 与 cloud provider → 拒绝歧义', () => {
+    const facts = probeHostSpeech(
+      service({
+        snapshot: () => ({
+          providers: [
+            {
+              id: 'sensevoice-local',
+              name: 'Local',
+              location: 'host-local',
+              languages: ['zh'],
+              preparation: { snapshot: () => ({ phase: 'ready' }) },
+            },
+            {
+              id: 'sensevoice-local',
+              name: 'Cloud copy',
+              location: 'cloud',
+              languages: ['zh'],
+              preparation: { snapshot: () => ({ phase: 'ready' }) },
+            },
+          ],
+        }),
+      }),
+    );
+    expect(facts.providerId).toBeNull();
+    expect(facts.ready).toBe(false);
+    expect(facts.reason).toContain('id 重复');
   });
 
   it('unprepared → 未就绪并提示下载准备', () => {

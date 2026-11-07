@@ -165,7 +165,7 @@ Beyond streaming, four deterministic paths are provided: `probe` parses containe
 
 Speech text is obtained through a three-stage cascade: a sidecar `.srt` / `.vtt` is read first, then embedded soft subtitles; without subtitles, silence detection and a speech-ratio estimate run, and an all-silent video skips transcription; finally ASR runs, using local whisper.cpp, the SenseVoice model from the official voice-input plugin, or OpenAI / Groq / a custom compatible endpoint. Segments are aligned by PTS and mounted on the corresponding packets, stitched across block boundaries with a ±300 ms tolerance.
 
-The default policy is vision-first with background transcription: once a call exceeds the soft deadline (`graceMs`, 8 s by default), the visual result returns and transcription continues in the background; later calls on the same video hit the disk cache.
+The default policy is vision-first with background transcription: once a call exceeds the soft deadline (`graceMs`, 60 s by default), the visual result returns and transcription continues in the background; later calls on the same video hit the disk cache.
 
 ### Cold regions in long videos
 

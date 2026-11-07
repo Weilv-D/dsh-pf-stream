@@ -38,7 +38,9 @@ One primary tool `dsh-pf-stream`, routed by `intent.action`:
 
 ## Top-level convenience fields
 
-The argument top level accepts 11 common video-inspection fields; the entry adapter normalizes them into the standard `intent` shape:
+Every `intent` field can also be passed at the top level with the same name: `action`, `mode`, `focus`, `roi_hint`, `full_frame`, `pts_window`, `timestamps_ms`, `interval_ms`, `frame_count`, `max_packets`, `max_tokens_budget`, `reset`, `audio`. When both are present, the value inside `intent` wins.
+
+The top level also accepts 11 historical video-inspection fields; the entry adapter normalizes them into the standard `intent` shape:
 
 `start_time`, `end_time`, `time_range`, `timestamps`, `fps`, `interval`, `num_frames`, `crop`, `bbox`, `roi`, `probe_only`.
 
@@ -171,7 +173,7 @@ Dual-tone separator lines block edge-feature crosstalk between units. With `rend
 | `audio.assistFocus` | `true` | Soft focus enhancement at speech-dense pauses |
 | `audio.sliceCodec` | `mp3` | Audio slice codec (`mp3` or `opus`) |
 | `audio.cacheDir` | `~/.dsh/cache/dsh-pf-stream` | Root for transcript cache, models and engines (reused per file fingerprint) |
-| `audio.graceMs` | `8000` | Transcription soft deadline (ms); visual results return first on timeout |
+| `audio.graceMs` | `60000` | Transcription soft deadline (ms); visual results return first on timeout |
 | `audio.asr.engine` | `auto` | `auto` / `local` / `cloud` / `host` / `off` / `legacy` |
 | `audio.asr.preset` | `openai` | Cloud preset: `openai` / `groq` / `custom` |
 | `audio.asr.baseUrl` | per preset | Cloud endpoint (OpenAI-compatible) |

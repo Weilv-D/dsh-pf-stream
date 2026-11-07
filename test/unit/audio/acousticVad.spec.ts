@@ -1,6 +1,6 @@
 /** A2/A5：声学 VAD（语音岛 / 静音短路 / 谷底切分）。 */
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CHUNK_PLAN, isSilentWindow, patchStreamedWavHeader, planChunks, planHostChunks, planIslandChunks, scanVad, sliceAudio } from '../../../src/audio/acousticVad.js';
+import { canonicalizeWav, DEFAULT_CHUNK_PLAN, isSilentWindow, planChunks, planHostChunks, planIslandChunks, scanVad, sliceAudio } from '../../../src/audio/acousticVad.js';
 import type { VadResult } from '../../../src/audio/types.js';
 import { fixturePath } from '../../integration/helpers.js';
 
@@ -91,7 +91,7 @@ describe('A2/A5 fixture 实测（ffmpeg silencedetect）', () => {
   }, 120_000);
 });
 
-describe('WAV 管道头回填', () => {
+describe('WAV canonical 头', () => {
   it('把 0xFFFFFFFF 的 RIFF/data 长度改成真实字节数', () => {
     const bytes = Buffer.alloc(44 + 3200);
     bytes.write('RIFF', 0, 'ascii');
@@ -101,21 +101,44 @@ describe('WAV 管道头回填', () => {
     bytes.writeUInt32LE(16, 16);
     bytes.write('data', 36, 'ascii');
     bytes.writeUInt32LE(0xffffffff, 40);
-    patchStreamedWavHeader(bytes);
-    expect(bytes.readUInt32LE(4)).toBe(bytes.length - 8);
-    expect(bytes.readUInt32LE(40)).toBe(3200);
+    const out = canonicalizeWav(bytes);
+    expect(out.readUInt32LE(4)).toBe(out.length - 8);
+    expect(out.readUInt32LE(40)).toBe(3200);
+    expect(out.toString('ascii', 36, 40)).toBe('data');
   });
 
-  it('已有真实长度时不改头', () => {
+  it('已有 canonical 头时不改内容', () => {
     const bytes = Buffer.alloc(44 + 16);
     bytes.write('RIFF', 0, 'ascii');
     bytes.writeUInt32LE(bytes.length - 8, 4);
     bytes.write('WAVE', 8, 'ascii');
+    bytes.write('fmt ', 12, 'ascii');
+    bytes.writeUInt32LE(16, 16);
     bytes.write('data', 36, 'ascii');
     bytes.writeUInt32LE(16, 40);
-    const before = Buffer.from(bytes);
-    patchStreamedWavHeader(bytes);
-    expect(bytes.equals(before)).toBe(true);
+    const out = canonicalizeWav(bytes);
+    expect(out.equals(bytes)).toBe(true);
+  });
+
+  it('带 LIST 块的 WAV 被重建成 canonical 头', () => {
+    const payload = Buffer.from('abcd');
+    const bytes = Buffer.alloc(12 + 24 + 18 + 8 + payload.length);
+    bytes.write('RIFF', 0, 'ascii');
+    bytes.writeUInt32LE(0xffffffff, 4);
+    bytes.write('WAVE', 8, 'ascii');
+    bytes.write('fmt ', 12, 'ascii');
+    bytes.writeUInt32LE(16, 16);
+    bytes.write('LIST', 36, 'ascii');
+    bytes.writeUInt32LE(10, 40);
+    bytes.write('data', 54, 'ascii');
+    bytes.writeUInt32LE(0xffffffff, 58);
+    payload.copy(bytes, 62);
+    const out = canonicalizeWav(bytes);
+    expect(out.toString('ascii', 12, 16)).toBe('fmt ');
+    expect(out.toString('ascii', 36, 40)).toBe('data');
+    expect(out.readUInt32LE(4)).toBe(out.length - 8);
+    expect(out.readUInt32LE(40)).toBe(payload.length);
+    expect(out.subarray(44).toString()).toBe('abcd');
   });
 
   it('WAV 切片输出 canonical 44 字节头', async () => {
