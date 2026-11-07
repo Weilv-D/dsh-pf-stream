@@ -22,6 +22,7 @@ import {
 } from '../stage6/precheck.js';
 import { baselinesFromIntent, mergeSessionIntent, sessionIntentChanged } from '../stage5/intent.js';
 import { fingerprintOf, getSessionState, getVideoSlot } from '../session/state.js';
+import { persistSession, restoreSessionIfAbsent } from '../session/persistence.js';
 import type { IntentDirective, ProbeResult } from '../types.js';
 import {
   audioHintLine,
@@ -128,6 +129,9 @@ async function runStreamCallLocked(
   sessionId: string,
   options: StreamCallOptions,
 ): Promise<StreamCallResult> {
+  // 落盘恢复先于内存访问（会话不存在时从 storageDomain 快照重建）；
+  // 在 per-session 串行锁内执行，与同会话的落盘写入天然互斥。
+  restoreSessionIfAbsent(sessionId);
   const session = getSessionState(sessionId);
   const fingerprint = fingerprintOf(videoPath);
   const slot = getVideoSlot(session, fingerprint);
@@ -365,6 +369,11 @@ async function runStreamCallLocked(
           telemetry: { cacheHit: false, chunks: 0, requests: 0, droppedByGuard: 0, costMs: 0 },
         };
   audioContext.mountedPackets = Object.keys(audioByPacket).length;
+
+  // 成功路径落盘：快照写穿（put 在后端确认持久后才 resolve）后再返回结果，
+  // 重启后续接点不回退。失败路径不落盘（失败调用在内存中也只提前合并了
+  // 意图，快照以最近一次成功调用为准）。
+  await persistSession(session);
 
   return {
     ...result,

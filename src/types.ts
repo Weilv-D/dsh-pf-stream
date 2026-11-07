@@ -386,6 +386,8 @@ export interface PfStreamPluginConfig {
   maxRequestBytes: number;
   maxColdRefs: number;
   telemetryEnabled: boolean;
+  /** 会话状态经宿主 storageDomain 落盘（重启后续接）；宿主无 storageDomain 时自动降级内存态。 */
+  persistSessionState: boolean;
   ffmpegPath?: string;
   ffprobePath?: string;
   tempDir?: string;

@@ -42,6 +42,7 @@ import {
   type WebServerService,
 } from './host/runtime.js';
 import { registerApi } from './host/api.js';
+import { initSessionPersistence, shutdownSessionPersistence } from './session/persistence.js';
 
 export const name = 'dsh-pf-stream';
 
@@ -60,6 +61,7 @@ export const Config = Schema.object({
   maxRequestBytes: Schema.number().min(1024).default(DEFAULT_MAX_REQUEST_BYTES).description('请求字节软水位'),
   maxColdRefs: Schema.number().min(0).default(4).description('冷区引用数量上限'),
   telemetryEnabled: Schema.boolean().default(true).description('遥测开关'),
+  persistSessionState: Schema.boolean().default(true).description('会话状态经宿主 storageDomain 落盘（重启后游标/意图续接；宿主未提供 storageDomain 时自动降级为内存态）'),
   ffmpegPath: Schema.string().description('ffmpeg 可执行文件路径（缺省自动探测）'),
   ffprobePath: Schema.string().description('ffprobe 可执行文件路径（缺省自动探测）'),
   tempDir: Schema.string().description('临时目录（缺省系统临时目录）'),
@@ -350,6 +352,24 @@ export function apply(ctx: Context, config: PfStreamPluginConfig) {
     services.configEditor = configEditor;
     runtime.invalidate();
   });
+  // 可选落盘设施：宿主提供 ctx.storageDomain 且配置未关闭时打开会话领域；
+  // open 失败降级内存态（persistence 模块内一次性告警）。设施若在插件存活期
+  // 被宿主卸载，其打开的领域会随之关闭，此后落盘操作静默降级（restore 返回
+  // false、persist 告警），不阻塞感知调用。
+  injectOptional(['storageDomain'], (scoped) => {
+    if (!config.persistSessionState) return;
+    const facility = scoped.get('storageDomain') as unknown;
+    if (facility === undefined || facility === null) return;
+    const logWarn = (message: string): void => {
+      try {
+        const lg = (host as unknown as { logger?: { warn?: (m: string) => void } }).logger;
+        lg?.warn?.(`[dsh-pf-stream] ${message}`);
+      } catch {
+        // 日志不可用不影响落盘
+      }
+    };
+    void initSessionPersistence(facility as Parameters<typeof initSessionPersistence>[0], { warn: logWarn });
+  });
 
   // 预热密钥与探测结果，工具首次调用即可拿到正确快照。
   void runtime.refresh();
@@ -357,6 +377,7 @@ export function apply(ctx: Context, config: PfStreamPluginConfig) {
   // register 返回的 disposer 为主注销路径；'dispose' 事件为兜底
   // （经 events 服务注册，事件名不受 keyof Events 约束）。
   ctx.events.on('dispose', () => {
+    void shutdownSessionPersistence();
     for (const off of disposers.splice(0)) {
       try {
         off();

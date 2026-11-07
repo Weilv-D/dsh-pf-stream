@@ -12,7 +12,11 @@
  *     { type, properties, required, additionalProperties, items, enum, const, description }，
  *     数值边界由入口适配器钳制实现（src/tool/schema.ts 头注）。
  *  3. package.json：@deepseek-ai/cordis 与 @deepseek-ai/schemastery 声明为
- *     peerDependencies（运行时依赖仅 pngjs——ADR-006 零原生依赖红线）；
+ *     peerDependencies（运行时依赖仅 pngjs + zod——ADR-006 零原生依赖红线；
+ *     zod 为 storageDomain 记录 schema 所需，见 src/session/persistence.ts）；
+ *     engines.dsh 声明宿主版本要求（插件市场以此显示宿主要求，未声明会显示
+ *     「未声明宿主要求」；宿主以 semver.satisfies(运行时, 范围, includePrerelease)
+ *     判定）。
  *  4. 依赖闭包无原生模块（排除 optional peer 与 devDependencies）。
  *
  * 退出码：0 = 全部通过；1 = 存在违规（输出违规清单）。
@@ -110,9 +114,24 @@ check(
   peer['@deepseek-ai/schemastery'] !== undefined,
 );
 check(
-  '运行时依赖仅 pngjs（零原生依赖红线，ADR-006）',
-  Object.keys(deps).length === 1 && deps.pngjs !== undefined,
+  '运行时依赖仅 pngjs + zod（零原生依赖红线，ADR-006；zod 为 storageDomain 记录 schema）',
+  Object.keys(deps).length === 2 && deps.pngjs !== undefined && deps.zod !== undefined,
   `实际 dependencies：${Object.keys(deps).join(', ') || '(空)'}`,
+);
+
+// ---------------------------------------------------------------------------
+// 3b. engines.dsh 宿主版本要求声明（插件市场按此显示宿主要求）
+// ---------------------------------------------------------------------------
+const enginesDsh = pkg.engines?.dsh;
+check(
+  'engines.dsh 声明为非空字符串（SemVer 范围）',
+  typeof enginesDsh === 'string' && enginesDsh.trim() !== '',
+  enginesDsh === undefined ? '未声明（市场将显示「未声明宿主要求」）' : `实际：${JSON.stringify(enginesDsh)}`,
+);
+check(
+  'engines.dsh 为收窄的 0.2.x 范围（^0.2.1-rc.5；0.3 未验证不虚报）',
+  enginesDsh === '^0.2.1-rc.5',
+  `实际：${JSON.stringify(enginesDsh)}`,
 );
 
 // ---------------------------------------------------------------------------
@@ -122,16 +141,18 @@ const NATIVE_HINTS = /node-gyp|node-pre-gyp|prebuild-install|node-addon-api/i;
 let nativeViolations = '';
 try {
   const lockRaw = readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8');
-  // 粗筛：pngjs 闭包（pngjs → 在 pnpm-lock 中无原生依赖块）
+  // 粗筛：pngjs / zod 闭包（在 pnpm-lock 中无原生依赖块）
   if (NATIVE_HINTS.test(lockRaw)) {
-    // pnpm-lock 可能包含其他工作区包；只检查 pngjs 段
-    const pngjsSection = lockRaw.split(/pngjs@/).slice(1).join('');
-    if (NATIVE_HINTS.test(pngjsSection)) nativeViolations = 'pngjs 闭包含原生构建工具';
+    // pnpm-lock 可能包含其他工作区包；逐包检查各自段
+    for (const name of ['pngjs', 'zod']) {
+      const section = lockRaw.split(new RegExp(`${name}@`)).slice(1).join('');
+      if (NATIVE_HINTS.test(section)) nativeViolations = `${name} 闭包含原生构建工具`;
+    }
   }
 } catch {
   // lock 文件缺失不视为违规（本地开发生成前）
 }
-check('pngjs 依赖闭包无原生构建链', nativeViolations === '', nativeViolations);
+check('pngjs/zod 依赖闭包无原生构建链', nativeViolations === '', nativeViolations);
 
 // ---------------------------------------------------------------------------
 // 5. cordis.patch.yml 装载清单形状（宿主安装器要求：顶层数组，元素为

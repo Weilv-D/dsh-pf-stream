@@ -110,6 +110,11 @@ export function getSessionState(sessionId: string): SessionState {
   return state;
 }
 
+/** 读取会话状态（不存在返回 undefined，不创建）。 */
+export function peekSessionState(sessionId: string): SessionState | undefined {
+  return memorySessions.get(sessionId);
+}
+
 /** 测试辅助：清空进程内会话存储。 */
 export function resetMemorySessions(): void {
   memorySessions.clear();
