@@ -12,6 +12,10 @@ import { CLOUD_PRESETS, cloudPreset, managedPaths, modelPreset } from '../asr/ca
 import { detectLocalEngine, type LocalEngineSnapshot } from '../asr/detect.js';
 import type { AsrRuntimeFacts } from '../asr/engine.js';
 import { resolveAsr } from '../asr/engine.js';
+import {
+  probeHostSpeech,
+  type HostSpeechService,
+} from '../asr/hostSpeech.js';
 import { LocalAsrInstaller, type InstallJob, type InstallTarget } from '../asr/install.js';
 
 export interface CredentialsService {
@@ -68,6 +72,8 @@ export interface HostServices {
   /** 首选写入通道：完整配置编辑（无需 volatile）。 */
   configEditor?: ConfigEditorService | undefined;
   webServer?: WebServerService | undefined;
+  /** 官方「语音输入」实验插件的本地转写服务；可选。 */
+  speechToText?: HostSpeechService | undefined;
 }
 
 export interface CloudStatus {
@@ -81,9 +87,18 @@ export interface CloudStatus {
 
 export interface AsrStatus {
   engine: LocalEngineSnapshot;
-  /** 用户配置的引擎模式（auto/local/cloud/off/legacy）。 */
+  /** 用户配置的引擎模式（auto/local/cloud/host/off/legacy）。 */
   mode: string;
   cloud: CloudStatus;
+  /** 官方语音输入插件的本地 provider 状态（不含服务句柄）。 */
+  host: {
+    available: boolean;
+    ready: boolean;
+    providerId: string | null;
+    providerName: string | null;
+    phase: string | null;
+    reason: string | null;
+  };
   /** 旧版 provider 直连配置是否存在（0.2.x 兼容）。 */
   legacyProvider: string;
   /** 缓存目录与占用（字节）。 */
@@ -106,7 +121,7 @@ export interface AsrStatus {
   configWritable: boolean;
   /** 当前实际会使用的引擎（auto 解析结果），供页面如实显示。 */
   active: {
-    kind: 'cloud' | 'local' | 'none';
+    kind: 'cloud' | 'local' | 'host' | 'none';
     preset: string;
     presetLabel: string;
   };
@@ -216,6 +231,7 @@ export class HostRuntime {
       keys: await this.keys(),
       localTimeoutMs: this.config().audio.asr.local?.timeoutMs ?? 300_000,
       localThreads: this.config().audio.asr.local?.threads ?? 0,
+      hostSpeech: probeHostSpeech(this.services.speechToText),
     };
     this.lastFacts = value;
     return value;
@@ -232,6 +248,8 @@ export class HostRuntime {
       keys: this.keyCache?.value ?? this.lastFacts?.keys ?? {},
       localTimeoutMs: this.config().audio.asr.local?.timeoutMs ?? 300_000,
       localThreads: this.config().audio.asr.local?.threads ?? 0,
+      // 每次现算：官方 provider 的 readiness 会随 prepare/worker 回收变化。
+      hostSpeech: probeHostSpeech(this.services.speechToText),
     };
     this.lastFacts = value;
     return value;
@@ -327,6 +345,7 @@ export class HostRuntime {
     const namespace = this.resolveConfigNamespace();
 
     const legacy = config.audio.asr.provider;
+    const hostSpeech = probeHostSpeech(this.services.speechToText);
 
     const resolution = resolveAsr(
       config.audio.asr,
@@ -337,6 +356,7 @@ export class HostRuntime {
         keys,
         localTimeoutMs: config.audio.asr.local?.timeoutMs ?? 300_000,
         localThreads: config.audio.asr.local?.threads ?? 0,
+        hostSpeech,
       },
     );
 
@@ -345,12 +365,16 @@ export class HostRuntime {
     const summary = ready
       ? resolution.kind === 'cloud'
         ? `云端转写就绪（${preset.label}）`
-        : `本地转写就绪（${detection.engine}）`
+        : resolution.kind === 'host'
+          ? `官方语音输入插件就绪（${hostSpeech.providerName ?? hostSpeech.providerId ?? '本地模型'}）`
+          : `本地转写就绪（${detection.engine}）`
       : mode === 'off'
         ? '转写已关闭'
-        : '还不能转写语音：安装本地模型或配置云端密钥';
+        : mode === 'host' && !hostSpeech.ready
+          ? hostSpeech.reason ?? '官方语音输入插件模型未准备'
+          : '还不能转写语音：安装本地模型、配置云端密钥，或准备官方语音输入插件模型';
 
-    const activeKind =
+    const activeKind: 'cloud' | 'local' | 'host' | 'none' =
       resolution.kind === 'legacy'
         ? resolution.settings?.provider === 'local_cli'
           ? 'local'
@@ -367,6 +391,14 @@ export class HostRuntime {
         model: cloudModel,
         keyConfigured,
         editable: preset.editable,
+      },
+      host: {
+        available: hostSpeech.available,
+        ready: hostSpeech.ready,
+        providerId: hostSpeech.providerId,
+        providerName: hostSpeech.providerName,
+        phase: hostSpeech.phase,
+        reason: hostSpeech.reason,
       },
       legacyProvider: legacy,
       cacheDir: config.audio.cacheDir,

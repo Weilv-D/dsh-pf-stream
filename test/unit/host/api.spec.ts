@@ -188,6 +188,48 @@ describe('设置页 API 契约', () => {
     });
     expect(good.status).toBe(200);
     expect(patches).toEqual([{ audio: { asr: { engine: 'local' } } }]);
+
+    const host = await call(handler, {
+      method: 'POST',
+      url: `${API_PREFIX}/config`,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ field: 'engine', value: 'host' }),
+    });
+    expect(host.status).toBe(200);
+    expect(patches).toContainEqual({ audio: { asr: { engine: 'host' } } });
+  });
+
+  it('GET /test 对 host 引擎返回就绪说明，不触发本地验证', async () => {
+    const { runtime } = fakeRuntime({
+      currentConfig: () => ({ audio: { asr: { engine: 'host', preset: 'openai' } } }),
+      facts: async () => ({
+        detection: { engine: 'managed' },
+        keys: {},
+        localTimeoutMs: 300000,
+        hostSpeech: {
+          available: true,
+          ready: true,
+          providerId: 'sensevoice-local',
+          providerName: 'SenseVoiceSmall',
+          phase: 'ready',
+          languages: ['auto', 'zh', 'en'],
+          reason: null,
+          service: { snapshot: () => ({ providers: [] }), resolve: () => ({}), transcribe: async () => ({ text: '' }) },
+        },
+      }),
+    });
+    const routes: Array<{ handler: (request: WebRequestLike, response: WebResponseLike) => void }> = [];
+    registerApi({ runtime, webServer: { register: (route) => { routes.push(route as never); return () => undefined; } } });
+    const result = await call(routes[0]!.handler, {
+      method: 'POST',
+      url: `${API_PREFIX}/test`,
+      headers: { host: '127.0.0.1:60271', 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(result.status).toBe(200);
+    const data = result.json.data as Record<string, unknown>;
+    expect(data.engine).toContain('官方语音输入');
+    expect(data.message).toContain('实际转写');
   });
 
   it('GET /status 返回结构与插件页所需字段', async () => {

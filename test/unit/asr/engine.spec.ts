@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { resolveAsr, type AsrConfigSlice, type AsrRuntimeFacts } from '../../../src/asr/engine.js';
 import type { LocalEngineSnapshot } from '../../../src/asr/detect.js';
+import type { HostSpeechFacts, HostSpeechService } from '../../../src/asr/hostSpeech.js';
 
 const LOCAL_READY: LocalEngineSnapshot = {
   engine: 'managed',
@@ -24,6 +25,26 @@ const LOCAL_MISSING: LocalEngineSnapshot = {
   ready: false,
   reason: '尚未安装本地转写引擎',
 };
+
+const HOST_SERVICE: HostSpeechService = {
+  snapshot: () => ({ providers: [] }),
+  resolve: () => ({}),
+  transcribe: async () => ({ text: '' }),
+};
+
+function hostFacts(over: Partial<HostSpeechFacts> = {}): HostSpeechFacts {
+  return {
+    available: true,
+    ready: true,
+    providerId: 'sensevoice-local',
+    providerName: 'SenseVoiceSmall',
+    phase: 'ready',
+    languages: ['auto', 'zh', 'en'],
+    reason: null,
+    service: HOST_SERVICE,
+    ...over,
+  };
+}
 
 function slice(over: Partial<AsrConfigSlice> = {}): AsrConfigSlice {
   return {
@@ -155,5 +176,67 @@ describe('引擎选择 resolveAsr', () => {
     const out = resolveAsr(slice({ provider: 'none' }), undefined, NO_ENV, undefined);
     expect(out.settings).toBeNull();
     expect(out.kind).toBe('none');
+  });
+
+  it('auto + 无云端密钥 + host 就绪 → 复用 host，且优先于 whisper 本地', () => {
+    const out = resolveAsr(slice(), 'zh', NO_ENV, facts({ hostSpeech: hostFacts() }));
+    expect(out.kind).toBe('host');
+    expect(out.settings?.provider).toBe('host_sensevoice');
+    expect(out.settings?.model).toBe('sensevoice-local');
+    expect(out.settings?.maxConcurrency).toBe(1);
+    expect(out.settings?.hostService).toBe(HOST_SERVICE);
+  });
+
+  it('auto + 云端密钥 + host 就绪 → 云端优先，保持现有行为', () => {
+    const out = resolveAsr(
+      slice(),
+      undefined,
+      NO_ENV,
+      facts({ keys: { openai: 'sk-test' }, hostSpeech: hostFacts() }),
+    );
+    expect(out.kind).toBe('cloud');
+  });
+
+  it('engine=local + host 就绪 → host 优先；host 未就绪则回退 whisper', () => {
+    const host = resolveAsr(slice({ engine: 'local' }), undefined, NO_ENV, facts({ hostSpeech: hostFacts() }));
+    expect(host.kind).toBe('host');
+
+    const fallback = resolveAsr(
+      slice({ engine: 'local' }),
+      undefined,
+      NO_ENV,
+      facts({ hostSpeech: hostFacts({ ready: false, phase: 'unprepared', reason: '模型未准备' }) }),
+    );
+    expect(fallback.kind).toBe('local');
+  });
+
+  it('engine=host 未就绪 → 不静默回退，给出 host_not_ready', () => {
+    const out = resolveAsr(
+      slice({ engine: 'host' }),
+      undefined,
+      NO_ENV,
+      facts({ hostSpeech: hostFacts({ ready: false, phase: 'unprepared', reason: '模型未准备' }) }),
+    );
+    expect(out.settings).toBeNull();
+    expect(out.kind).toBe('none');
+    expect(out.reason).toBe('host_not_ready');
+    expect(out.detail).toBe('模型未准备');
+  });
+
+  it('engine=host + 不支持的语言 → host_language_unsupported', () => {
+    const out = resolveAsr(
+      slice({ engine: 'host' }),
+      'ja',
+      NO_ENV,
+      facts({ hostSpeech: hostFacts({ languages: ['auto', 'zh', 'en'] }) }),
+    );
+    expect(out.settings).toBeNull();
+    expect(out.reason).toBe('host_language_unsupported');
+  });
+
+  it('engine=host 没有该服务 → host_missing_service', () => {
+    const out = resolveAsr(slice({ engine: 'host' }), undefined, NO_ENV, facts());
+    expect(out.settings).toBeNull();
+    expect(out.reason).toBe('host_missing_service');
   });
 });

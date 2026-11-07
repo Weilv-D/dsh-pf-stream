@@ -12,15 +12,19 @@
 import type { AsrSettings } from '../audio/types.js';
 import { buildLocalArgs, cloudPreset, LOCAL_ENGINES, modelPreset } from './catalog.js';
 import type { LocalEngineSnapshot } from './detect.js';
+import { hostSpeechSupportsLanguage, type HostSpeechFacts } from './hostSpeech.js';
 
-export type AsrEngineMode = 'auto' | 'local' | 'cloud' | 'off' | 'legacy';
+export type AsrEngineMode = 'auto' | 'local' | 'cloud' | 'host' | 'off' | 'legacy';
 
 export type AsrUnavailableReason =
   | 'engine_off'
   | 'cloud_missing_key'
   | 'cloud_missing_endpoint'
   | 'local_missing_engine'
-  | 'local_missing_model';
+  | 'local_missing_model'
+  | 'host_missing_service'
+  | 'host_not_ready'
+  | 'host_language_unsupported';
 
 export interface AsrRuntimeFacts {
   detection: LocalEngineSnapshot;
@@ -30,6 +34,8 @@ export interface AsrRuntimeFacts {
   localTimeoutMs: number;
   /** 本地推理线程数；0 表示交给引擎决定（内部按 4 处理）。 */
   localThreads?: number | undefined;
+  /** 官方「语音输入」插件的本地 provider；缺省表示宿主未提供该服务。 */
+  hostSpeech?: HostSpeechFacts | undefined;
 }
 
 export interface AsrConfigSlice {
@@ -47,7 +53,7 @@ export interface AsrConfigSlice {
 
 export interface AsrResolution {
   settings: AsrSettings | null;
-  kind: 'cloud' | 'local' | 'legacy' | 'none';
+  kind: 'cloud' | 'local' | 'host' | 'legacy' | 'none';
   reason: AsrUnavailableReason | null;
   /** 面向用户的一句话解释（设置页与结果提示共用）。 */
   detail: string | null;
@@ -70,6 +76,54 @@ function hasText(value: string | null | undefined): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function hostSettings(
+  config: AsrConfigSlice,
+  language: string | null,
+  host: HostSpeechFacts | undefined,
+): AsrSettings | null {
+  if (
+    host === undefined ||
+    !host.available ||
+    !host.ready ||
+    host.service === null ||
+    host.providerId === null ||
+    !hostSpeechSupportsLanguage(host.languages, language)
+  ) {
+    return null;
+  }
+  return {
+    provider: 'host_sensevoice',
+    baseUrl: null,
+    model: host.providerId,
+    apiKey: null,
+    language,
+    args: null,
+    // 官方推理超时默认 120s；工具侧 grace 仍按 audio.graceMs 控制等待。
+    timeoutMs: Math.max(config.timeoutMs, 120_000),
+    maxConcurrency: 1,
+    hostService: host.service,
+  };
+}
+
+function hostUnavailable(
+  language: string | null,
+  host: HostSpeechFacts | undefined,
+): { reason: AsrUnavailableReason; detail: string } {
+  if (host === undefined || !host.available) {
+    return {
+      reason: 'host_missing_service',
+      detail: host?.reason ?? '未安装或未启用官方语音输入插件',
+    };
+  }
+  if (!host.ready) {
+    return { reason: 'host_not_ready', detail: host.reason ?? '官方语音输入插件模型未准备' };
+  }
+  return {
+    reason: 'host_language_unsupported',
+    detail: `官方语音输入插件不支持语言 ${language ?? 'auto'}`,
+  };
+}
+
 export function resolveAsr(
   config: AsrConfigSlice,
   intentLanguage: string | undefined,
@@ -81,6 +135,14 @@ export function resolveAsr(
 
   // 没有运行时事实（单元测试 / 宿主未注入）时退回 0.2.x 语义。
   if (facts === undefined) {
+    if (config.engine === 'host') {
+      return {
+        settings: null,
+        kind: 'none',
+        reason: 'host_missing_service',
+        detail: '当前宿主没有提供官方语音输入服务',
+      };
+    }
     const provider = config.provider;
     const needsKey = provider === 'openai_verbose' || provider === 'openai_basic';
     const apiKey = hasText(envKey) ? envKey : config.apiKey?.trim() || null;
@@ -108,7 +170,8 @@ export function resolveAsr(
   const model = preset.editable ? config.model?.trim() ?? '' : preset.model;
   const cloudReady = hasText(cloudKey) && hasText(baseUrl) && hasText(model);
 
-  const legacyExplicit = config.provider !== 'none' && mode !== 'cloud' && mode !== 'local';
+  const legacyExplicit =
+    config.provider !== 'none' && mode !== 'cloud' && mode !== 'local' && mode !== 'host';
 
   if (mode === 'legacy' || legacyExplicit) {
     const needsKey = config.provider === 'openai_verbose' || config.provider === 'openai_basic';
@@ -158,6 +221,27 @@ export function resolveAsr(
       reason: null,
       detail: null,
     };
+  }
+
+  const wantHost = mode === 'host' || mode === 'local' || mode === 'auto';
+  if (wantHost) {
+    const host = facts.hostSpeech;
+    const settings = hostSettings(config, language, host);
+    if (settings !== null) {
+      return {
+        settings,
+        kind: 'host',
+        reason: null,
+        detail:
+          host?.providerName === null || host?.providerName === undefined
+            ? '复用官方语音输入插件模型'
+            : `复用官方语音输入插件：${host.providerName}`,
+      };
+    }
+    if (mode === 'host') {
+      const missing = hostUnavailable(language, host);
+      return { settings: null, kind: 'none', reason: missing.reason, detail: missing.detail };
+    }
   }
 
   const wantLocal = mode === 'local' || mode === 'auto';

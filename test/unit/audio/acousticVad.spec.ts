@@ -1,6 +1,6 @@
 /** A2/A5：声学 VAD（语音岛 / 静音短路 / 谷底切分）。 */
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CHUNK_PLAN, isSilentWindow, planChunks, planIslandChunks, scanVad } from '../../../src/audio/acousticVad.js';
+import { DEFAULT_CHUNK_PLAN, isSilentWindow, planChunks, planHostChunks, planIslandChunks, scanVad } from '../../../src/audio/acousticVad.js';
 import type { VadResult } from '../../../src/audio/types.js';
 import { fixturePath } from '../../integration/helpers.js';
 
@@ -51,6 +51,16 @@ describe('A5 谷底切分规划', () => {
   it('planIslandChunks：岛逐切，>30s 硬切', () => {
     expect(planIslandChunks([0, 10_000], vad([], [[1_000, 3_000]]))).toEqual([[1_000, 3_000]]);
     expect(planIslandChunks([0, 80_000], vad([], [[0, 80_000]]))).toEqual([[0, 30_000], [30_000, 60_000], [60_000, 80_000]]);
+  });
+
+  it('planHostChunks：岛按 15s 切；无岛时也硬切，避免整窗超限', () => {
+    expect(planHostChunks([0, 10_000], vad([], [[1_000, 3_000]]))).toEqual([[1_000, 3_000]]);
+    expect(planHostChunks([0, 80_000], vad([], [[0, 80_000]]))).toEqual([
+      [0, 15_000], [15_000, 30_000], [30_000, 45_000], [45_000, 60_000], [60_000, 75_000], [75_000, 80_000],
+    ]);
+    expect(planHostChunks([0, 70_000], null)).toEqual([
+      [0, 15_000], [15_000, 30_000], [30_000, 45_000], [45_000, 60_000], [60_000, 70_000],
+    ]);
   });
 });
 

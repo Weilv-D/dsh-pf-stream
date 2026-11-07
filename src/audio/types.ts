@@ -7,6 +7,8 @@
  * - 挂载（mount）：把台词段映射到某个画布包（±300ms 交集 + 中心归属）。
  */
 
+import type { HostSpeechService } from '../asr/hostSpeech.js';
+
 export type AudioSourceKind = 'external_subtitle' | 'embedded_subtitle' | 'asr';
 
 export type AudioStatus =
@@ -53,7 +55,7 @@ export interface VadResult {
   activeRatio: number;
 }
 
-export type AsrProviderKind = 'openai_verbose' | 'openai_basic' | 'local_cli';
+export type AsrProviderKind = 'openai_verbose' | 'openai_basic' | 'local_cli' | 'host_sensevoice';
 
 /** ASR 运行时设置（env > Config 解析后的产物）。 */
 export interface AsrSettings {
@@ -68,6 +70,8 @@ export interface AsrSettings {
   timeoutMs: number;
   /** 并发上限。 */
   maxConcurrency: number;
+  /** host_sensevoice 专用：官方 speechToText 服务句柄（不写入配置/缓存）。 */
+  hostService?: HostSpeechService | null | undefined;
 }
 
 /** 音频通道运行时设置（Config + intent 合并后的产物）。 */
@@ -92,7 +96,7 @@ export interface AudioPluginConfig {
   cacheDir: string;
   graceMs: number;
   asr: {
-    /** 引擎选择（0.3.0）：auto/local/cloud/off/legacy；缺省按 auto 解释。 */
+    /** 引擎选择：auto/local/cloud/host/off/legacy；缺省按 auto 解释。 */
     engine?: string | undefined;
     /** 云端服务商预设 id（openai/groq/custom）。 */
     preset?: string | undefined;

@@ -8,11 +8,18 @@
 
 import {
   planChunks,
+  planHostChunks,
   planIslandChunks,
   sliceAudio,
   type VadScanOptions,
 } from './acousticVad.js';
-import { transcribeBasic, transcribeVerbose, AsrRequestError, type RawSegment } from './asrProviders.js';
+import {
+  transcribeBasic,
+  transcribeHostSpeech,
+  transcribeVerbose,
+  AsrRequestError,
+  type RawSegment,
+} from './asrProviders.js';
 import { guardSegments } from './hallucinationGuard.js';
 import {
   cachedSegmentsFor,
@@ -57,7 +64,7 @@ interface ChunkOutcome {
 async function runChunks(
   videoPath: string,
   chunks: Array<[number, number]>,
-  provider: 'openai_verbose' | 'openai_basic' | 'local_cli',
+  provider: AsrSettings['provider'],
   options: AsrRunOptions,
 ): Promise<{ outcomes: ChunkOutcome[]; failed: number; requests: number; verboseRejected: boolean; failureSamples: string[] }> {
   const outcomes: ChunkOutcome[] = [];
@@ -79,7 +86,9 @@ async function runChunks(
       if (range === undefined) return;
       try {
         requests++;
-        const audio = await sliceAudio(videoPath, range, options.sliceCodec, vadOpts);
+        // 官方 SenseVoice provider 只接受 WAV；其余 provider 使用用户配置的压缩编码。
+        const sliceCodec = provider === 'host_sensevoice' ? 'wav' : options.sliceCodec;
+        const audio = await sliceAudio(videoPath, range, sliceCodec, vadOpts);
         const input = {
           startMs: range[0],
           endMs: range[1],
@@ -100,6 +109,8 @@ async function runChunks(
           }
         } else if (provider === 'openai_basic') {
           raw = await transcribeBasic(input, { settings: options.settings, signal: options.signal });
+        } else if (provider === 'host_sensevoice') {
+          raw = await transcribeHostSpeech(input, { settings: options.settings, signal: options.signal });
         } else {
           const { transcribeLocalCli } = await import('./asrProviders.js');
           raw = await transcribeLocalCli(input, { settings: options.settings, signal: options.signal }, options.tempDir);
@@ -231,13 +242,17 @@ function planChunksFor(
   vad: VadResult | null,
   provider: AsrSettings['provider'],
 ): Array<[number, number]> {
-  // 无时间戳 provider（openai_basic）按语音岛直切（视听融合设计 A3）：
-  // basic 整块文本只能按块区间锚定，岛切掉静音段可同时减少
-  // 静音区幻觉输入与无效计费字节。verbose/local_cli 有段级时间戳，走谷底切分。
+  // 无时间戳 provider（openai_basic / host_sensevoice）按语音岛直切：
+  // basic 整块文本只能按块区间锚定，岛切掉静音段可同时减少静音区幻觉输入；
+  // host provider 用更短的 15s 块，降低块级时间戳的挂载粒度。
   const out: Array<[number, number]> = [];
   for (const range of ranges) {
     out.push(
-      ...(provider === 'openai_basic' ? planIslandChunks(range, vad) : planChunks(range, vad)),
+      ...(provider === 'openai_basic'
+        ? planIslandChunks(range, vad)
+        : provider === 'host_sensevoice'
+          ? planHostChunks(range, vad)
+          : planChunks(range, vad)),
     );
   }
   return out;

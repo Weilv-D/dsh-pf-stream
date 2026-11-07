@@ -95,7 +95,8 @@ async function fetchWithTimeout(
 
 function buildForm(input: AsrChunkInput, settings: AsrSettings, responseFormat: string): FormData {
   const form = new FormData();
-  const ext = input.mimeType === 'audio/ogg' ? 'ogg' : 'mp3';
+  const ext =
+    input.mimeType === 'audio/ogg' ? 'ogg' : input.mimeType === 'audio/wav' ? 'wav' : 'mp3';
   form.append('file', new Blob([new Uint8Array(input.bytes)], { type: input.mimeType }), `chunk.${ext}`);
   form.append('model', settings.model ?? 'whisper-1');
   form.append('response_format', responseFormat);
@@ -187,6 +188,74 @@ export async function transcribeBasic(
   })) as { text?: string };
   const text = (doc.text ?? '').trim();
   if (!text) return [];
+  return [{ startMs: 0, endMs: input.endMs - input.startMs, text }];
+}
+
+/**
+ * host_sensevoice：复用官方「语音输入」插件的 speechToText 服务。
+ *
+ * 官方 provider 只返回整块文本、没有段级时间戳；路由层把文本锚到块区间。
+ * 服务未就绪/未安装时由引擎选择层拦截，这里只处理探测后仍失败的情况。
+ */
+export async function transcribeHostSpeech(
+  input: AsrChunkInput,
+  deps: AsrTranscribeDeps,
+): Promise<RawSegment[]> {
+  const { settings, signal } = deps;
+  const service = settings.hostService;
+  const providerId = settings.model;
+  if (service === undefined || service === null) {
+    throw new AsrRequestError('官方语音输入服务不可用', 'ASR_HOST_UNAVAILABLE');
+  }
+  if (!providerId) {
+    throw new AsrRequestError('官方语音输入 provider 未指定', 'ASR_HOST_UNAVAILABLE');
+  }
+  let spec: unknown;
+  try {
+    spec = service.resolve({
+      audio: input.bytes,
+      providerId,
+      ...(settings.language === null ? {} : { language: settings.language }),
+    });
+  } catch (error) {
+    throw new AsrRequestError(
+      `官方语音输入无法解析音频：${(error as Error).message}`,
+      'ASR_HOST_RESOLVE',
+    );
+  }
+  const timeoutMs = Number.isFinite(settings.timeoutMs) && settings.timeoutMs > 0
+    ? settings.timeoutMs
+    : 120_000;
+  const controller = new AbortController();
+  const onAbort = (): void => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', onAbort, { once: true });
+  const timeoutError = new AsrRequestError(`官方语音输入超过 ${timeoutMs}ms`, 'ASR_TIMEOUT');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(timeoutError);
+    }, timeoutMs);
+  });
+  let transcript: { text?: string | undefined };
+  try {
+    transcript = await Promise.race([
+      service.transcribe(spec, controller.signal),
+      timeout,
+    ]);
+  } catch (error) {
+    if (error === timeoutError) throw error;
+    throw new AsrRequestError(
+      `官方语音输入转写失败：${(error as Error).message}`,
+      'ASR_HOST_TRANSCRIBE',
+    );
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
+  }
+  const text = (transcript.text ?? '').trim();
+  if (text.length === 0) return [];
   return [{ startMs: 0, endMs: input.endMs - input.startMs, text }];
 }
 
@@ -318,6 +387,8 @@ export async function transcribeChunk(
       return transcribeBasic(input, deps);
     case 'local_cli':
       return transcribeLocalCli(input, deps, tempDir);
+    case 'host_sensevoice':
+      return transcribeHostSpeech(input, deps);
     default:
       throw new AsrRequestError(`未知 provider：${deps.settings.provider}`, 'ASR_PROVIDER');
   }

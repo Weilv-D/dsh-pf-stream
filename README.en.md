@@ -22,7 +22,7 @@
 | :--- | :--- |
 | 1 | Install ffmpeg ([commands below](#1-install-ffmpeg)); `ffmpeg -version` must print output |
 | 2 | Left sidebar **Plugins** → **Video understanding** → switch it on |
-| 3 | Click **Download local model** (~190 MB), then **Test transcription** |
+| 3 | Pick one transcription path: download the local model (~190 MB), reuse a prepared official voice-input model, or enter a cloud key. Then click **Test transcription** |
 | 4 | Give the agent a video path and ask |
 
 Video works without transcription. Only videos that have no subtitles and need speech text require step 3.
@@ -81,11 +81,12 @@ To open the settings: **Plugins in the left sidebar → Video understanding → 
 
 <p><img src="https://raw.githubusercontent.com/Weilv-D/dsh-pf-stream/main/docs/assets/panel.png" width="720" alt="Transcription settings panel on the plugin detail page: decoder, local transcription and cloud transcription cards"></p>
 
-Three cards at the top report video decode (ffmpeg), local transcription, and cloud transcription. Pick one path:
+Three cards at the top report video decode (ffmpeg), local transcription, and cloud transcription. When the official voice-input plugin is installed, a fourth "Official voice input" card appears. Pick one path:
 
 | Path | Best for | What to do |
 | :--- | :--- | :--- |
 | Local (recommended) | Free, offline, no API key | Click "Download local model" (~190 MB), then "Test transcription" |
+| Official voice input | Official voice-input plugin installed and its model prepared | No whisper download; wait for "Model ready" |
 | Cloud | You have a key, or the machine is slow | Pick OpenAI / Groq / a custom compatible endpoint, paste the key, save, then test |
 | Skip for now | Videos have subtitles | Use it as is; speech-only videos get no transcript |
 
@@ -96,7 +97,17 @@ Three cards at the top report video decode (ffmpeg), local transcription, and cl
 3. When done, the card reads "Ready · whisper.cpp".
 4. Click "Test transcription". "Local engine available" means it works.
 
-One-click install currently supports Windows x64. On other systems, install whisper.cpp and set `audio.asr.local.binPath` in the config file, or use cloud transcription.
+One-click install currently supports Windows x64. On other systems, install whisper.cpp and set `audio.asr.local.binPath` in the config file, use cloud transcription, or reuse the official voice-input plugin when available.
+
+### Official voice-input model
+
+If `@deepseek-ai/dsh-experimental-voice-input-bundle` is installed and enabled, and its SenseVoice model is prepared on the plugin page, `dsh-pf-stream` reuses that model:
+
+1. Open "Advanced" and set the engine to `auto`, `local`, or `host`.
+2. The card reading "Official voice input · Model ready" means it is usable.
+3. No whisper model download is needed.
+
+`auto` still checks the cloud first; a fully configured cloud is not replaced. When the model is not prepared, the plugin only shows a notice and never downloads it. The official provider returns text per block with no intra-block timestamps; this plugin cuts blocks of at most 15 seconds, so timestamps are block-level.
 
 ### Cloud key
 
@@ -104,7 +115,7 @@ One-click install currently supports Windows x64. On other systems, install whis
 2. Paste the API key and click "Save". After saving, only "Configured" is shown; the key is never echoed back.
 3. Click "Test transcription" to verify the key and network.
 
-> **Auto policy**: cloud is used when key, endpoint and model are all set (faster, billed per use); otherwise the local engine. The badge next to the panel title shows the engine in use, such as "Transcription ready · Cloud". Under "Advanced" you can switch to local only, cloud only, or off.
+> **Auto policy**: cloud is used when key, endpoint and model are all set (faster, billed per use); otherwise the official voice-input model when ready; otherwise the local engine. The badge next to the panel title shows the engine in use, such as "Transcription ready · Cloud" or "Transcription ready · Official voice". Under "Advanced" you can switch to local only, cloud only, official voice only, or off.
 
 ## Use it
 
@@ -151,7 +162,7 @@ Beyond streaming, four deterministic paths are provided: `probe` parses containe
 
 ### Cascaded speech sources
 
-Speech text is obtained through a three-stage cascade: a sidecar `.srt` / `.vtt` is read first, then embedded soft subtitles; without subtitles, silence detection and a speech-ratio estimate run, and an all-silent video skips transcription; finally ASR runs, either local whisper.cpp or OpenAI / Groq / a custom compatible endpoint. Segments are aligned by PTS and mounted on the corresponding packets, stitched across block boundaries with a ±300 ms tolerance.
+Speech text is obtained through a three-stage cascade: a sidecar `.srt` / `.vtt` is read first, then embedded soft subtitles; without subtitles, silence detection and a speech-ratio estimate run, and an all-silent video skips transcription; finally ASR runs, using local whisper.cpp, the SenseVoice model from the official voice-input plugin, or OpenAI / Groq / a custom compatible endpoint. Segments are aligned by PTS and mounted on the corresponding packets, stitched across block boundaries with a ±300 ms tolerance.
 
 The default policy is vision-first with background transcription: once a call exceeds the soft deadline (`graceMs`, 8 s by default), the visual result returns and transcription continues in the background; later calls on the same video hit the disk cache.
 

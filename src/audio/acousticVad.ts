@@ -185,20 +185,49 @@ export function planIslandChunks(
 }
 
 /**
- * 切片音频编码（16kHz 单声道；mp3 = libmp3lame -q:a 6，opus = libopus 24k）。
+ * host provider 的切分：优先语音岛，最多 15s。
+ *
+ * 官方 provider 只返回整块文本；块越短，块级时间戳越接近真实语音段。
+ * 没有 VAD 岛时 planIslandChunks 会返回整窗，因此这里必须再硬切，
+ * 避免长窗口超过 provider 的 4MiB WAV 上限。
+ */
+export function planHostChunks(
+  window: [number, number],
+  vad: VadResult | null,
+  maxChunkMs = 15_000,
+): Array<[number, number]> {
+  const base = planIslandChunks(window, vad, maxChunkMs);
+  const out: Array<[number, number]> = [];
+  for (const [start, end] of base) {
+    if (end - start <= maxChunkMs) {
+      out.push([start, end]);
+      continue;
+    }
+    for (let t = start; t < end; t += maxChunkMs) {
+      out.push([t, Math.min(t + maxChunkMs, end)]);
+    }
+  }
+  return out;
+}
+
+/**
+ * 切片音频编码（16kHz 单声道；mp3 = libmp3lame -q:a 6，opus = libopus 24k，
+ * wav = 16-bit PCM）。
  * 返回 {bytes, mimeType}；失败抛错由路由层按块失败处理。
  */
 export async function sliceAudio(
   videoPath: string,
   range: [number, number],
-  codec: 'mp3' | 'opus',
+  codec: 'mp3' | 'opus' | 'wav',
   options: VadScanOptions,
 ): Promise<{ bytes: Buffer; mimeType: string }> {
   const [start, end] = range;
   const codecArgs =
     codec === 'mp3'
       ? ['-c:a', 'libmp3lame', '-q:a', '6', '-f', 'mp3']
-      : ['-c:a', 'libopus', '-b:a', '24k', '-f', 'ogg'];
+      : codec === 'wav'
+        ? ['-c:a', 'pcm_s16le', '-f', 'wav']
+        : ['-c:a', 'libopus', '-b:a', '24k', '-f', 'ogg'];
   const { stdout } = await execFile(
     options.ffmpegPath,
     [
@@ -215,6 +244,6 @@ export async function sliceAudio(
   );
   return {
     bytes: stdout,
-    mimeType: codec === 'mp3' ? 'audio/mpeg' : 'audio/ogg',
+    mimeType: codec === 'mp3' ? 'audio/mpeg' : codec === 'wav' ? 'audio/wav' : 'audio/ogg',
   };
 }

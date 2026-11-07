@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { HostRuntime, type ConfigEntry } from '../../../src/host/runtime.js';
+import type { HostSpeechService } from '../../../src/asr/hostSpeech.js';
 import type { PfStreamPluginConfig } from '../../../src/types.js';
 
 const BASE_CONFIG = {
@@ -100,5 +101,62 @@ describe('配置写入（走 configEditor）', () => {
     expect(config.audio.asr.baseUrl).toBe('https://api.example.com/v1/audio/transcriptions');
     expect(config.audio.asr.model).toBe('m');
     expect(config.audio.asr.engine).toBe('auto');
+  });
+});
+
+function hostService(phase: string): HostSpeechService {
+  return {
+    snapshot: () => ({
+      providers: [
+        {
+          id: 'sensevoice-local',
+          name: 'SenseVoiceSmall',
+          location: 'host-local',
+          languages: ['auto', 'zh', 'en'],
+          preparation: { snapshot: () => ({ phase }) },
+        },
+      ],
+    }),
+    resolve: () => ({}),
+    transcribe: async () => ({ text: 'ok' }),
+  };
+}
+
+function hostConfig(): PfStreamPluginConfig {
+  return {
+    ...BASE_CONFIG,
+    audio: {
+      ...BASE_CONFIG.audio,
+      cacheDir: 'C:/tmp/dsh-pf-stream-test-cache',
+      asr: { ...BASE_CONFIG.audio.asr, engine: 'host' },
+    },
+  } as PfStreamPluginConfig;
+}
+
+describe('host 引擎状态', () => {
+  it('官方 provider ready 时 ready=true，active.kind=host', async () => {
+    const runtime = new HostRuntime(() => hostConfig(), { speechToText: hostService('ready') });
+    const status = await runtime.status();
+    expect(status.ready).toBe(true);
+    expect(status.host.ready).toBe(true);
+    expect(status.host.providerId).toBe('sensevoice-local');
+    expect(status.active.kind).toBe('host');
+    expect(status.summary).toContain('官方语音输入');
+  });
+
+  it('provider 未准备时给出原因，不把 ready 置真', async () => {
+    const runtime = new HostRuntime(() => hostConfig(), { speechToText: hostService('unprepared') });
+    const status = await runtime.status();
+    expect(status.ready).toBe(false);
+    expect(status.host.ready).toBe(false);
+    expect(status.active.kind).toBe('none');
+    expect(status.summary).toContain('未准备');
+  });
+
+  it('没有 speechToText 服务时 host.available=false', async () => {
+    const runtime = new HostRuntime(() => hostConfig(), {});
+    const status = await runtime.status();
+    expect(status.host.available).toBe(false);
+    expect(status.ready).toBe(false);
   });
 });

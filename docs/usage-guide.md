@@ -109,13 +109,14 @@ The engine is chosen by `audio.asr.engine`, default `auto`:
 
 | `engine` | Behavior |
 | --- | --- |
-| `auto` (default) | Cloud when key, endpoint and model are all set (faster, billed per use); otherwise the installed local engine; otherwise no transcription |
-| `local` | Local engine only |
+| `auto` (default) | Cloud when key, endpoint and model are all set (faster, billed per use); otherwise the official voice-input model when ready; otherwise the installed local engine; otherwise no transcription |
+| `local` | Official voice-input model when ready; otherwise the local engine |
 | `cloud` | Cloud only |
+| `host` | Official voice-input model only; no fallback |
 | `off` | Transcription off (subtitles are still extracted) |
 | `legacy` | 0.2.x semantics: follow the old `audio.asr.provider` values |
 
-The engine in use is shown in the plugin page badge (for example, "Transcription ready · Cloud"). Both local and cloud are configured in the plugin page, not by hand-editing config. Transcript text stays in the original language. Speech mounts onto the matching packet:
+The engine in use is shown in the plugin page badge (for example, "Transcription ready · Cloud" or "Transcription ready · Official voice"). Local, cloud and the official voice-input model are configured in the plugin page, not by hand-editing config. Transcript text stays in the original language. If `@deepseek-ai/dsh-experimental-voice-input-bundle` is installed and its SenseVoice model is prepared, the plugin reuses that model; it never downloads or prepares the model itself. The official provider returns text per block with no intra-block timestamps; blocks are at most 15 seconds, so transcript times are block-level. Speech mounts onto the matching packet:
 
 ```text
 Audio @Packet #42: [12.1s-12.9s] "we spent three years on this" | [13.0s-13.4s] "and today we can finally talk"
@@ -127,13 +128,13 @@ Audio @Packet #42: [12.1s-12.9s] "we spent three years on this" | [13.0s-13.4s] 
 
 **Plugins in the left sidebar → Video understanding → the panel below the description** has three parts:
 
-1. **Status cards**: ffmpeg, local engine, cloud key — each with an actionable verdict.
-2. **Two setup paths**: one-click local model download (progress and cancel), or a cloud key (presets plus a custom compatible endpoint).
+1. **Status cards**: ffmpeg, local engine, cloud key, and (when installed) official voice input — each with an actionable verdict.
+2. **Setup paths**: one-click local model download (progress and cancel), a cloud key (presets plus a custom compatible endpoint), or reuse of the official voice-input model.
 3. **Advanced**: engine policy, language, model size, threads, transcript cache usage and clearing.
 
 "Clear transcript cache" removes only the per-file, per-engine transcript JSON; it can be regenerated. Canvas images live in the host attachment store and belong to session history, so this button leaves them alone. Model and engine files are also kept; use "Download local model" again to reinstall.
 
-"Test transcription" runs a real short audio clip through the whole chain, not just a file existence check.
+"Test transcription" runs a real short audio clip through the whole chain, not just a file existence check. In `host` mode it only checks that the official provider is ready; the actual transcription runs when a video is processed.
 
 ## Canvas forms and billing
 
@@ -171,7 +172,7 @@ Dual-tone separator lines block edge-feature crosstalk between units. With `rend
 | `audio.sliceCodec` | `mp3` | Audio slice codec (`mp3` or `opus`) |
 | `audio.cacheDir` | `~/.dsh/cache/dsh-pf-stream` | Root for transcript cache, models and engines (reused per file fingerprint) |
 | `audio.graceMs` | `8000` | Transcription soft deadline (ms); visual results return first on timeout |
-| `audio.asr.engine` | `auto` | `auto` / `local` / `cloud` / `off` / `legacy` |
+| `audio.asr.engine` | `auto` | `auto` / `local` / `cloud` / `host` / `off` / `legacy` |
 | `audio.asr.preset` | `openai` | Cloud preset: `openai` / `groq` / `custom` |
 | `audio.asr.baseUrl` | per preset | Cloud endpoint (OpenAI-compatible) |
 | `audio.asr.model` | per preset | Cloud model name; executable path for `local_cli` |

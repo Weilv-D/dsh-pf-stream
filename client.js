@@ -38,6 +38,13 @@ window.__ModuleLoader__.load({
       cloudReady: '已配置密钥',
       cloudMissing: '待配置',
       cloudHint: '云端转写只发送音频片段。',
+      host: '官方语音输入',
+      hostReady: '模型已就绪',
+      hostMissing: '未就绪',
+      hostHint: '复用 DSH 官方语音输入插件的 SenseVoice 模型；音频仅在本机处理。',
+      hostNeedsPrepare: '官方语音输入插件已安装，但模型尚未准备。请在插件设置中完成准备后再使用。',
+      activeHost: '官方语音',
+      engineHost: '官方语音输入（复用模型）',
       install: '下载本地模型',
       reinstall: '重新下载本地模型',
       installSize: 'small · 约 190 MB · 仅需下载一次',
@@ -66,7 +73,7 @@ window.__ModuleLoader__.load({
       engineLocal: '仅本地',
       engineCloud: '仅云端',
       engineOff: '不转写',
-      engineHint: '自动：云端配置完整时用云端（更快，按量计费）；否则用本地模型。',
+      engineHint: '自动：云端配置完整时用云端（更快，按量计费）；否则优先复用官方语音输入模型，再退回本地模型。',
       language: '语言',
       languageAuto: '自动识别',
       modelSize: '本地模型大小',
@@ -124,6 +131,13 @@ window.__ModuleLoader__.load({
       cloudReady: 'Key configured',
       cloudMissing: 'To configure',
       cloudHint: 'Cloud transcription sends only audio slices.',
+      host: 'Official voice input',
+      hostReady: 'Model ready',
+      hostMissing: 'Not ready',
+      hostHint: 'Reuse the SenseVoice model from the official DSH voice-input plugin; audio stays on this machine.',
+      hostNeedsPrepare: 'The official voice-input plugin is installed, but its model is not prepared. Prepare it in the plugin settings first.',
+      activeHost: 'Official voice',
+      engineHost: 'Official voice input (reuse model)',
       install: 'Download local model',
       reinstall: 'Download the local model again',
       installSize: 'small · ~190 MB · one-time download',
@@ -152,7 +166,7 @@ window.__ModuleLoader__.load({
       engineLocal: 'Local only',
       engineCloud: 'Cloud only',
       engineOff: 'No transcription',
-      engineHint: 'Auto: use the cloud when fully configured (faster, billed per use); otherwise the local model.',
+      engineHint: 'Auto: use the cloud when fully configured (faster, billed per use); otherwise prefer the official voice-input model, then fall back to the local model.',
       language: 'Language',
       languageAuto: 'Detect automatically',
       modelSize: 'Local model size',
@@ -758,6 +772,8 @@ window.__ModuleLoader__.load({
       const ffmpeg = status.ffmpeg || {};
       const localReady = status.engine && status.engine.ready;
       const cloudReady = status.cloud && status.cloud.keyConfigured && status.cloud.baseUrl && status.cloud.model;
+      const hostReady = status.host && status.host.ready;
+      const hostAvailable = status.host && status.host.available;
       // 徽标口径取服务端权威结论（engine=off / audio.mode=off 时 ready=false），
       // 本地自算会出现「转写可用 · 未启用」的自相矛盾徽标
       const ready = status.ready === true;
@@ -780,12 +796,19 @@ window.__ModuleLoader__.load({
                 ? 'local'
                 : 'none';
       const activeLabel =
-        activeKind === 'local' ? t('activeLocal') : activeKind === 'cloud' ? t('activeCloud') : t('activeNone');
+        activeKind === 'host'
+          ? t('activeHost')
+          : activeKind === 'local'
+            ? t('activeLocal')
+            : activeKind === 'cloud'
+              ? t('activeCloud')
+              : t('activeNone');
 
       const engineModes = [
         ['auto', t('engineAuto')],
         ['local', t('engineLocal')],
         ['cloud', t('engineCloud')],
+        ['host', t('engineHost')],
         ['off', t('engineOff')],
         ['legacy', t('engineLegacy')],
       ];
@@ -848,6 +871,16 @@ window.__ModuleLoader__.load({
             color: cloudReady ? PALETTE.ok : PALETTE.idle,
             hint: (status.cloud.label || '') + (cloudReady ? ' · ' + status.cloud.model : ' · ' + t('cloudHint')),
           }),
+          hostAvailable
+            ? h(StatusCard, {
+                label: t('host'),
+                state: hostReady ? t('hostReady') : t('hostMissing'),
+                color: hostReady ? PALETTE.ok : PALETTE.idle,
+                hint: hostReady
+                  ? (status.host.providerName || status.host.providerId || t('hostHint'))
+                  : status.host.reason || t('hostNeedsPrepare'),
+              })
+            : null,
         ),
 
         installing
@@ -889,7 +922,7 @@ window.__ModuleLoader__.load({
             'button',
             {
               type: 'button',
-              style: btnStyle(styles.button, busy !== '' || (!localReady && !cloudReady)),
+              style: btnStyle(styles.button, busy !== '' || (!localReady && !cloudReady && !hostReady)),
               onClick: function () {
                 void run('test', function () {
                   return call('/test', {}).then(function (result) {
@@ -1143,7 +1176,7 @@ window.__ModuleLoader__.load({
       const job = status && status.install;
       const installing =
         job && ['preparing', 'downloading', 'verifying', 'extracting'].indexOf(job.phase) >= 0;
-      const ready = status && (status.ready || (status.engine && status.engine.ready));
+      const ready = status && (status.ready || (status.engine && status.engine.ready) || (status.host && status.host.ready));
 
       function install() {
         setBusy(true);
@@ -1161,6 +1194,9 @@ window.__ModuleLoader__.load({
         { style: styles.activation },
         h('strong', { style: { fontSize: 14 } }, t('activationTitle')),
         h('p', { style: styles.hint }, ready ? t('activationReady') : t('activationBody')),
+        status && status.host && status.host.available && !status.host.ready
+          ? h('p', { style: styles.hint }, t('hostNeedsPrepare'))
+          : null,
         installing
           ? h(Progress, {
               t: t,

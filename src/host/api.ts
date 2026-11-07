@@ -72,7 +72,7 @@ function sameOrigin(request: WebRequestLike): boolean {
   }
 }
 
-const ENGINE_MODES = new Set(['auto', 'local', 'cloud', 'off', 'legacy']);
+const ENGINE_MODES = new Set(['auto', 'local', 'cloud', 'host', 'off', 'legacy']);
 
 interface ConfigField {
   path: string[];
@@ -290,7 +290,20 @@ export function registerApi(deps: ApiDeps): () => void {
         const label =
           resolution.kind === 'cloud'
             ? `云端 ${cloudPreset(config.audio.asr.preset ?? null).label}`
-            : (LOCAL_ENGINES.find((entry) => entry.id === engine)?.label ?? engine);
+            : resolution.kind === 'host'
+              ? `官方语音输入（${facts.hostSpeech?.providerName ?? facts.hostSpeech?.providerId ?? 'SenseVoice'}）`
+              : (LOCAL_ENGINES.find((entry) => entry.id === engine)?.label ?? engine);
+        if (resolution.kind === 'host') {
+          send(response, 200, {
+            ok: true,
+            data: {
+              engine: label,
+              latencyMs: 0,
+              message: '官方语音输入插件模型已就绪；实际转写在视频调用时执行',
+            },
+          });
+          return;
+        }
         const result =
           resolution.kind === 'cloud' ? await verifyCloud(settings) : await verifyLocal(settings);
         send(response, 200, { ok: true, data: { ...result, engine: label, durationMs: result.latencyMs } });

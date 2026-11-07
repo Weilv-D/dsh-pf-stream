@@ -13,6 +13,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { PfStreamPluginConfig } from './types.js';
+import type { HostSpeechService } from './asr/hostSpeech.js';
 import {
   handleToolCall,
   type AttachedImage,
@@ -83,7 +84,7 @@ export const Config = Schema.object({
     asr: Schema.object({
       engine: Schema.string()
         .default('auto')
-        .description('转写引擎（auto 自动选择/local 本地/cloud 云端/off 关闭/legacy 旧 provider 语义）'),
+        .description('转写引擎（auto 自动选择/local 本地/cloud 云端/host 官方语音输入插件/off 关闭/legacy 旧 provider 语义）'),
       preset: Schema.string().default('openai').description('云端服务商预设（openai/groq/custom）'),
       provider: Schema.string().default('none').description('ASR provider（none/openai_verbose/openai_basic/local_cli）'),
       baseUrl: Schema.string().description('OpenAI 兼容端点（缺省官方）'),
@@ -390,6 +391,20 @@ export function apply(ctx: Context, config: PfStreamPluginConfig) {
     runtime.invalidate();
     scoped.effect(() => () => {
       if (services.configEditor === configEditor) services.configEditor = undefined;
+      runtime.invalidate();
+    });
+  });
+
+  // 官方「语音输入」实验插件：服务可选、可运行时启停；每次解析设置时现探测
+  // readiness，因此这里只登记句柄，不缓存“已就绪”结论。
+  injectOptional(['speechToText'], (scoped) => {
+    const speechToText = scoped.get('speechToText') as unknown as HostSpeechService | undefined;
+    if (speechToText === undefined || typeof speechToText.snapshot !== 'function') return;
+    services.speechToText = speechToText;
+    runtime.invalidate();
+    void runtime.refresh();
+    scoped.effect(() => () => {
+      if (services.speechToText === speechToText) services.speechToText = undefined;
       runtime.invalidate();
     });
   });
