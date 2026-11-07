@@ -1,6 +1,6 @@
 /** A2/A5：声学 VAD（语音岛 / 静音短路 / 谷底切分）。 */
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CHUNK_PLAN, isSilentWindow, planChunks, planHostChunks, planIslandChunks, scanVad } from '../../../src/audio/acousticVad.js';
+import { DEFAULT_CHUNK_PLAN, isSilentWindow, patchStreamedWavHeader, planChunks, planHostChunks, planIslandChunks, scanVad, sliceAudio } from '../../../src/audio/acousticVad.js';
 import type { VadResult } from '../../../src/audio/types.js';
 import { fixturePath } from '../../integration/helpers.js';
 
@@ -89,4 +89,46 @@ describe('A2/A5 fixture 实测（ffmpeg silencedetect）', () => {
     expect(chunks[0]![0]).toBe(0);
     expect(chunks[1]![1]).toBe(80_000);
   }, 120_000);
+});
+
+describe('WAV 管道头回填', () => {
+  it('把 0xFFFFFFFF 的 RIFF/data 长度改成真实字节数', () => {
+    const bytes = Buffer.alloc(44 + 3200);
+    bytes.write('RIFF', 0, 'ascii');
+    bytes.writeUInt32LE(0xffffffff, 4);
+    bytes.write('WAVE', 8, 'ascii');
+    bytes.write('fmt ', 12, 'ascii');
+    bytes.writeUInt32LE(16, 16);
+    bytes.write('data', 36, 'ascii');
+    bytes.writeUInt32LE(0xffffffff, 40);
+    patchStreamedWavHeader(bytes);
+    expect(bytes.readUInt32LE(4)).toBe(bytes.length - 8);
+    expect(bytes.readUInt32LE(40)).toBe(3200);
+  });
+
+  it('已有真实长度时不改头', () => {
+    const bytes = Buffer.alloc(44 + 16);
+    bytes.write('RIFF', 0, 'ascii');
+    bytes.writeUInt32LE(bytes.length - 8, 4);
+    bytes.write('WAVE', 8, 'ascii');
+    bytes.write('data', 36, 'ascii');
+    bytes.writeUInt32LE(16, 40);
+    const before = Buffer.from(bytes);
+    patchStreamedWavHeader(bytes);
+    expect(bytes.equals(before)).toBe(true);
+  });
+
+  it('WAV 切片输出 canonical 44 字节头', async () => {
+    const out = await sliceAudio(
+      fixturePath('case_audio_silence.mp4'),
+      [0, 1000],
+      'wav',
+      { ffmpegPath: 'ffmpeg' },
+    );
+    expect(out.mimeType).toBe('audio/wav');
+    expect(out.bytes.toString('ascii', 0, 4)).toBe('RIFF');
+    expect(out.bytes.toString('ascii', 36, 40)).toBe('data');
+    expect(out.bytes.readUInt32LE(4)).toBe(out.bytes.length - 8);
+    expect(out.bytes.readUInt32LE(40)).toBe(out.bytes.length - 44);
+  }, 60_000);
 });

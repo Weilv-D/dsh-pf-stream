@@ -73,7 +73,7 @@ export async function scanVad(
   const peakMatch = /Peak level dB:\s*(-?[\d.]+|-?inf)/.exec(stderr);
   const toDb = (raw: string | undefined): number | null => {
     if (raw === undefined) return null;
-    if (raw === '-inf') return -Infinity;
+    if (raw === '-inf') return null;
     const v = Number(raw);
     return Number.isFinite(v) ? v : null;
   };
@@ -211,6 +211,34 @@ export function planHostChunks(
 }
 
 /**
+ * ffmpeg 把 WAV 写到管道时无法回填长度，RIFF/data 的长度字段会是 0xFFFFFFFF。
+ * 官方 speechToText 的 WAV 校验会拒绝这种头；在内存里按实际字节数回填。
+ */
+export function patchStreamedWavHeader(bytes: Buffer): Buffer {
+  if (bytes.length < 12) return bytes;
+  if (bytes.toString('ascii', 0, 4) !== 'RIFF' || bytes.toString('ascii', 8, 12) !== 'WAVE') {
+    return bytes;
+  }
+  if (bytes.readUInt32LE(4) === 0xffffffff) {
+    bytes.writeUInt32LE(bytes.length - 8, 4);
+  }
+  let offset = 12;
+  while (offset + 8 <= bytes.length) {
+    const id = bytes.toString('ascii', offset, offset + 4);
+    const size = bytes.readUInt32LE(offset + 4);
+    if (id === 'data') {
+      if (size === 0xffffffff) {
+        bytes.writeUInt32LE(bytes.length - offset - 8, offset + 4);
+      }
+      break;
+    }
+    if (size === 0xffffffff) break;
+    offset += 8 + size + (size & 1);
+  }
+  return bytes;
+}
+
+/**
  * 切片音频编码（16kHz 单声道；mp3 = libmp3lame -q:a 6，opus = libopus 24k，
  * wav = 16-bit PCM）。
  * 返回 {bytes, mimeType}；失败抛错由路由层按块失败处理。
@@ -226,7 +254,7 @@ export async function sliceAudio(
     codec === 'mp3'
       ? ['-c:a', 'libmp3lame', '-q:a', '6', '-f', 'mp3']
       : codec === 'wav'
-        ? ['-c:a', 'pcm_s16le', '-f', 'wav']
+        ? ['-c:a', 'pcm_s16le', '-fflags', '+bitexact', '-f', 'wav']
         : ['-c:a', 'libopus', '-b:a', '24k', '-f', 'ogg'];
   const { stdout } = await execFile(
     options.ffmpegPath,
@@ -243,7 +271,7 @@ export async function sliceAudio(
     { encoding: 'buffer', timeoutMs: 120_000, signal: options.signal },
   );
   return {
-    bytes: stdout,
+    bytes: codec === 'wav' ? patchStreamedWavHeader(stdout) : stdout,
     mimeType: codec === 'mp3' ? 'audio/mpeg' : codec === 'wav' ? 'audio/wav' : 'audio/ogg',
   };
 }

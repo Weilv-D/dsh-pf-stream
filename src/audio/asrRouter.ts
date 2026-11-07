@@ -133,16 +133,19 @@ async function runChunks(
 function anchor(outcome: ChunkOutcome): TranscriptSegment[] {
   const span = outcome.range[1] - outcome.range[0];
   return outcome.raw
-    .map((r) => ({
-      segId: 0,
-      startMs: outcome.anchorStartMs + Math.max(0, Math.min(span, r.startMs)),
-      endMs: outcome.anchorStartMs + Math.max(0, Math.min(span, r.endMs)),
-      text: r.text,
-      source: 'asr' as const,
-      noSpeechProb: r.noSpeechProb,
-      avgLogprob: r.avgLogprob,
-      compressionRatio: r.compressionRatio,
-    }))
+    .map((r) => {
+      const segment: TranscriptSegment = {
+        segId: 0,
+        startMs: outcome.anchorStartMs + Math.max(0, Math.min(span, r.startMs)),
+        endMs: outcome.anchorStartMs + Math.max(0, Math.min(span, r.endMs)),
+        text: r.text,
+        source: 'asr',
+      };
+      if (r.noSpeechProb !== undefined) segment.noSpeechProb = r.noSpeechProb;
+      if (r.avgLogprob !== undefined) segment.avgLogprob = r.avgLogprob;
+      if (r.compressionRatio !== undefined) segment.compressionRatio = r.compressionRatio;
+      return segment;
+    })
     .filter((s) => s.endMs > s.startMs && s.text.length > 0);
 }
 
