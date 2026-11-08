@@ -81,7 +81,12 @@ describe('case23: 会话状态落盘（storageDomain 接线）', () => {
 
     // 调用 2：从落盘恢复后继续 [2000, 4000)
     const call2 = await runStreamCallFixture(VIDEO, SESSION, {}, { defaultStreamWindowMs: 2000 });
-    expect(call2.nextCursor.lastConsumedPtsMs).toBeGreaterThanOrEqual(cursor1);
+    // 游标严格前移（等长窗口 fixture 下恢复失败会重放 [0,2000)，cursor2==cursor1）
+    expect(call2.nextCursor.lastConsumedPtsMs).toBeGreaterThan(cursor1);
+
+    // 意图快照随恢复：恢复后意图序号不回退（注释宣称的 intentId 不回退落到断言）
+    const seqOf = (id: string): number => Number(id.replace('intent_', ''));
+    expect(seqOf(call2.sessionIntentId)).toBeGreaterThanOrEqual(seqOf(call1.sessionIntentId));
 
     // 包序号跨重启连续：增量包（historyMode='initial'）不回退、不重发旧包；
     // 热区/冷区引用按设计复用原包 packetId（full_strip_ref / anchor_only_ref）。

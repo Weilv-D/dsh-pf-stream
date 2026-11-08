@@ -83,7 +83,7 @@ describe('A7 Epoch 冷区台词保留', () => {
     const first = await runStreamCallFixture(
       'case_audio_long.mp4',
       'a7',
-      { pts_window: [0, 30_000], max_packets: 12 },
+      { pts_window: [0, 30_000], max_packets: 20 },
       { audio, epochCompactionWindow: 50 },
     );
     expect(first.packets.length).toBeGreaterThan(0);
@@ -103,49 +103,83 @@ describe('A7 Epoch 冷区台词保留', () => {
     const second = await runStreamCallFixture(
       'case_audio_long.mp4',
       'a7',
-      { pts_window: [30_000, 60_000], max_packets: 12 },
+      { pts_window: [30_000, 60_000], max_packets: 20 },
       { audio, epochCompactionWindow: 2 },
     );
-    expect(second.coldRefCount).toBeGreaterThanOrEqual(1);
+    // 收编保护（P1-2）：本轮新生包条带先完整投递，收敛只吸收上一轮已投递的包；
+    // 本轮包进入冷区在下一轮，冷区断言因此移至第三轮。
+    const secondInitial = second.packets.filter((a) => a.packet.historyMode === 'initial');
+    expect(secondInitial.length).toBeGreaterThanOrEqual(1);
 
-    // 冷区提示行带台词保留行
-    const joined = second.hintLines.join('\n');
-    expect(joined).toMatch(/\[Audio@#\d+\] \d+ segments? retained/);
+    // 冷区链上的台词保留：收编保护（P1-2）下，包在「投递的下一轮」才获冷区
+    // 准入——被收编的具体包取决于岛分布与包分布，固定断言第三轮不再成立。
+    // 逐轮推进（游标自然续接）直到出现带台词的冷区引用，并以此轮做内容断言。
+    let audioColdCall: typeof second | null = null;
+    let coldSeen = 0;
+    for (let round = 0; round < 5 && audioColdCall === null; round += 1) {
+      const call = await runStreamCallFixture(
+        'case_audio_long.mp4',
+        'a7',
+        { max_packets: 20 },
+        { audio, epochCompactionWindow: 2 },
+      );
+      coldSeen = Math.max(coldSeen, call.coldRefCount);
+      if (call.hintLines.some((line) => /\[Audio@#\d+\] \d+ segments? retained/.test(line))) {
+        audioColdCall = call;
+        break;
+      }
+    }
+    expect(coldSeen).toBeGreaterThanOrEqual(1);
+    expect(audioColdCall).not.toBeNull();
 
     // 冷区引用包在 audioByPacket 中带 segments（Epoch 收敛后台词仍保留在冷区链上）
-    const coldWithAudio = second.packets.filter((a) => {
-      const mount = second.audioByPacket[a.packet.packetId];
+    const coldWithAudio = audioColdCall!.packets.filter((a) => {
+      const mount = audioColdCall!.audioByPacket[a.packet.packetId];
       return a.packet.historyMode === 'anchor_only_ref' && mount !== undefined && mount.segments.length > 0;
     });
     expect(coldWithAudio.length).toBeGreaterThanOrEqual(1);
     for (const artifact of coldWithAudio) {
-      const mount = second.audioByPacket[artifact.packet.packetId]!;
+      const mount = audioColdCall!.audioByPacket[artifact.packet.packetId]!;
       expect(mount.segments.length).toBeGreaterThan(0);
       for (const seg of mount.segments) {
         expect(seg.text.length).toBeGreaterThan(0);
       }
     }
-    // 同参数重放（独立会话、共享缓存、同样两步调用）冷区锚点 SHA 集合一致：冷区引用字节可复现
+    // 同参数重放（独立会话、共享缓存、与主流程完全镜像的三步+逐轮推进）
+    // 冷区锚点 SHA 集合一致：冷区引用字节可复现（确定性解码 → 同轮命中）。
     await runStreamCallFixture(
       'case_audio_long.mp4',
       'a7-replay',
-      { pts_window: [0, 30_000], max_packets: 12 },
+      { pts_window: [0, 30_000], max_packets: 20 },
       { audio, epochCompactionWindow: 50 },
     );
-    const replay = await runStreamCallFixture(
+    await runStreamCallFixture(
       'case_audio_long.mp4',
       'a7-replay',
-      { pts_window: [30_000, 60_000], max_packets: 12 },
+      { pts_window: [30_000, 60_000], max_packets: 20 },
       { audio, epochCompactionWindow: 2 },
     );
+    let replayAudioCold: typeof second | null = null;
+    for (let round = 0; round < 5 && replayAudioCold === null; round += 1) {
+      const call = await runStreamCallFixture(
+        'case_audio_long.mp4',
+        'a7-replay',
+        { max_packets: 20 },
+        { audio, epochCompactionWindow: 2 },
+      );
+      if (call.hintLines.some((line) => /\[Audio@#\d+\] \d+ segments? retained/.test(line))) {
+        replayAudioCold = call;
+      }
+    }
+    expect(replayAudioCold).not.toBeNull();
     const shaSet = (r: typeof second) =>
       r.packets
         .filter((a) => a.packet.historyMode === 'anchor_only_ref')
         .map((a) => a.packet.anchorFSha256)
         .sort()
         .join('|');
-    expect(shaSet(replay)).toBe(shaSet(second));
-    // 新包也有台词挂载（岛台词覆盖 [0,10] 与 [20,30]）
+    expect(shaSet(replayAudioCold!)).toBe(shaSet(audioColdCall!));
+    // 第二轮新包有台词挂载（岛台词覆盖 [30,60] 窗口）
     const newMounts = Object.entries(second.audioByPacket).filter(([pid]) => {
       const artifact = second.packets.find((a) => a.packet.packetId === Number(pid));
       return artifact?.packet.historyMode === 'initial';

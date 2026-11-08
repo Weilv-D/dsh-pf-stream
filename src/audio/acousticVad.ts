@@ -69,16 +69,11 @@ export async function scanVad(
     silences.push([w0 + pendingStart * 1000, w1]); // 尾部静音延至窗口末
   }
 
-  const rmsMatch = /RMS level dB:\s*(-?[\d.]+|-?inf)/.exec(stderr);
-  const peakMatch = /Peak level dB:\s*(-?[\d.]+|-?inf)/.exec(stderr);
-  const toDb = (raw: string | undefined): number | null => {
-    if (raw === undefined) return null;
-    if (raw === '-inf') return null;
-    const v = Number(raw);
-    return Number.isFinite(v) ? v : null;
-  };
-  const rmsDb = toDb(rmsMatch?.[1]);
-  const peakDb = toDb(peakMatch?.[1]);
+  // astats（reset=0）逐帧打印累积统计，EOS 处的块才是整窗值——首个匹配是
+  // 首帧自身电平（≈20ms），会系统性高估语音活跃度；取最后一个匹配。
+  const rmsDb = toDb(lastAstatsMatch(stderr, /RMS level dB:\s*(-?[\d.]+|-?inf)/g));
+  const peakDb = toDb(lastAstatsMatch(stderr, /Peak level dB:\s*(-?[\d.]+|-?inf)/g));
+
 
   const islands = complement(silences, window).filter(([a, b]) => b - a >= MIN_ISLAND_MS);
   const speechMs = islands.reduce((acc, [a, b]) => acc + (b - a), 0);
@@ -89,6 +84,21 @@ export async function scanVad(
     peakDb,
     activeRatio: w1 > w0 ? speechMs / (w1 - w0) : 0,
   };
+}
+
+/** astats 输出的最后一个电平值（逐帧打印下 EOS 处的块为整窗累积值）。 */
+export function lastAstatsMatch(stderr: string, pattern: RegExp): string | undefined {
+  let out: string | undefined;
+  for (const m of stderr.matchAll(pattern)) out = m[1];
+  return out;
+}
+
+/** stderr 电平值 → dB 数值（'-inf' 记为 null；非法值同样 null）。 */
+function toDb(raw: string | undefined): number | null {
+  if (raw === undefined) return null;
+  if (raw === '-inf') return null;
+  const v = Number(raw);
+  return Number.isFinite(v) ? v : null;
 }
 
 /** 整窗无语音判定（静音占比 ≥95% 或峰值 < -45dBFS）。 */

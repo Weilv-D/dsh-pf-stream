@@ -182,7 +182,9 @@ export async function runStreamPass(
     heartbeatSeq: options.heartbeatSeqStart - 1,
   };
 
-  if (w0 >= probe.lastPtsMs) {
+  // 流耗尽门：常规视频 w0 达到末帧 PTS 即流末；单帧视频（lastPtsMs=0）首访
+  // 放行一次解码（w0 恒为 0，仅当游标已推进越过 0 才算已消费）。
+  if (w0 >= probe.lastPtsMs && (probe.lastPtsMs > 0 || cursor.lastConsumedPtsMs > 0)) {
     return {
       packets,
       hintLines,
@@ -612,7 +614,16 @@ export async function runStreamPass(
       ctrlTickLog: ctrl.tickLog.slice(),
       audioAssistFires,
     },
-    nextCursor: buildCursor(rt, cursor, lastPtsOfWindow ?? w0, ctrl),
+    // 单帧视频（lastPtsMs=0）解码后游标 +1ms 越过虚拟流末：否则 0>=0 门会让
+    // 后续每次调用重放同一帧（永不 end_of_stream）。
+    nextCursor: buildCursor(
+      rt,
+      cursor,
+      lastPtsOfWindow !== null
+        ? lastPtsOfWindow + (probe.lastPtsMs === 0 ? 1 : 0)
+        : w0,
+      ctrl,
+    ),
     counters,
   };
 }

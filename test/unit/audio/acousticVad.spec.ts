@@ -1,6 +1,6 @@
 /** A2/A5：声学 VAD（语音岛 / 静音短路 / 谷底切分）。 */
 import { describe, expect, it } from 'vitest';
-import { canonicalizeWav, DEFAULT_CHUNK_PLAN, isSilentWindow, planChunks, planHostChunks, planIslandChunks, scanVad, sliceAudio } from '../../../src/audio/acousticVad.js';
+import { canonicalizeWav, DEFAULT_CHUNK_PLAN, isSilentWindow, lastAstatsMatch, planChunks, planHostChunks, planIslandChunks, scanVad, sliceAudio } from '../../../src/audio/acousticVad.js';
 import type { VadResult } from '../../../src/audio/types.js';
 import { fixturePath } from '../../integration/helpers.js';
 
@@ -18,6 +18,28 @@ describe('A2 静音短路判定', () => {
   });
   it('null VAD 不短路', () => {
     expect(isSilentWindow(null)).toBe(false);
+  });
+});
+
+describe('astats 电平解析（整窗累积值）', () => {
+  it('逐帧打印下取最后一个匹配（EOS 块为整窗值）', () => {
+    const stderr = [
+      '[Parsed_astats_1 @ ...] Frame 1',
+      'RMS level dB:         -12.4',
+      'Peak level dB:        -3.1',
+      '[Parsed_astats_1 @ ...] Frame 2',
+      'RMS level dB:         -31.7',
+      'Peak level dB:        -9.9',
+      '[Parsed_astats_1 @ ...] Overall',
+      'RMS level dB:         -40.2',
+      'Peak level dB:        -44.6',
+    ].join('\n');
+    expect(lastAstatsMatch(stderr, /RMS level dB:\s*(-?[\d.]+|-?inf)/g)).toBe('-40.2');
+    expect(lastAstatsMatch(stderr, /Peak level dB:\s*(-?[\d.]+|-?inf)/g)).toBe('-44.6');
+  });
+
+  it('无匹配返回 undefined', () => {
+    expect(lastAstatsMatch('', /RMS level dB:\s*(-?[\d.]+|-?inf)/g)).toBeUndefined();
   });
 });
 

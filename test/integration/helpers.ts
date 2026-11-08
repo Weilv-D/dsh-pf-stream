@@ -92,7 +92,10 @@ export async function runStreamCallFixture(
 ): Promise<StreamCallResult> {
   const path = fixturePath(name);
   const probe = await probeVideo(path, { ffprobePath: 'ffprobe' });
-  return runStreamCall(path, probe, intent as IntentDirective, sessionId, streamCallOptions(options));
+  const result = await runStreamCall(path, probe, intent as IntentDirective, sessionId, streamCallOptions(options));
+  // 生产语义：handler 在附件回传成功后调用 commit 落盘（本 harness 等价模拟）。
+  await result.commit();
+  return result;
 }
 
 export function packetsOf(result: StreamCallResult) {

@@ -16,6 +16,7 @@ import {
   restoreSessionIfAbsent,
   sessionPersistenceActive,
   setSessionDomainForTests,
+  setSessionPersistenceLogger,
   shutdownSessionPersistence,
 } from '../../../src/session/persistence.js';
 import {
@@ -326,5 +327,102 @@ describe('内存会话上限', () => {
     expect(peekSessionState('mem-0')).toBeUndefined();
     expect(peekSessionState('mem-1')).toBeUndefined();
     expect(peekSessionState(`mem-${SESSION_MEMORY_LIMIT + 1}`)).toBeDefined();
+  });
+});
+
+describe('覆盖守卫（回退谱系/未知格式不覆盖磁盘）', () => {
+  /** 构造磁盘记录（payload = 真实 exportSessionSnapshot 的 JSON 文本）。 */
+  function makeDiskRecord(seq: number, cursor: number, payloadPatch?: (doc: Record<string, unknown>) => void): Record<string, unknown> {
+    const state = makeState('guard-session');
+    state.packetSeq = seq;
+    for (const slot of state.videos.values()) {
+      slot.cursor.lastConsumedPtsMs = cursor;
+    }
+    const payload = JSON.parse(exportSessionSnapshot(state)) as Record<string, unknown>;
+    payloadPatch?.(payload);
+    return {
+      schemaVersion: 1,
+      sessionId: 'guard-session',
+      payload: JSON.stringify(payload),
+      savedAtMs: Date.now(),
+    };
+  }
+
+  it('磁盘谱系较新（packetSeq 更大）→ 拒绝覆盖并告警一次', async () => {
+    const table = new FakeTable();
+    const disk = makeDiskRecord(10, 5000);
+    table.records.set('guard-session', disk);
+    setSessionDomainForTests({ name: 'd', table: () => table, close: async () => {} } as never);
+    setSessionPersistenceLogger({ warn: (m) => warnLog.push(m) });
+
+    const state = makeState('guard-session');
+    state.packetSeq = 5;
+    expect(await persistSession(state)).toBe(false);
+    // 磁盘记录未被覆盖（同引用断言，savedAtMs 不参与比较）
+    expect(table.records.get('guard-session')).toBe(disk);
+    expect(warnLog.some((m) => m.includes('拒绝覆盖'))).toBe(true);
+  });
+
+  it('内存谱系不落后（seq/游标均不旧于磁盘）→ 正常覆盖', async () => {
+    const table = new FakeTable();
+    table.records.set('guard-session', makeDiskRecord(10, 5000));
+    setSessionDomainForTests({ name: 'd', table: () => table, close: async () => {} } as never);
+    setSessionPersistenceLogger({ warn: (m) => warnLog.push(m) });
+
+    const state = makeState('guard-session');
+    state.packetSeq = 10;
+    for (const slot of state.videos.values()) slot.cursor.lastConsumedPtsMs = 6000;
+    expect(await persistSession(state)).toBe(true);
+    expect(warnLog.some((m) => m.includes('拒绝覆盖'))).toBe(false);
+  });
+
+  it('packetSeq 相同但磁盘游标更靠前 → 拒绝覆盖', async () => {
+    const table = new FakeTable();
+    table.records.set('guard-session', makeDiskRecord(10, 9000));
+    setSessionDomainForTests({ name: 'd', table: () => table, close: async () => {} } as never);
+    setSessionPersistenceLogger({ warn: (m) => warnLog.push(m) });
+
+    const state = makeState('guard-session');
+    state.packetSeq = 10;
+    for (const slot of state.videos.values()) slot.cursor.lastConsumedPtsMs = 100;
+    expect(await persistSession(state)).toBe(false);
+    expect(warnLog.some((m) => m.includes('拒绝覆盖'))).toBe(true);
+  });
+
+  it('磁盘无记录 → 直接写', async () => {
+    const table = new FakeTable();
+    setSessionDomainForTests({ name: 'd', table: () => table, close: async () => {} } as never);
+    expect(await persistSession(makeState('fresh-session'))).toBe(true);
+    expect(table.records.has('fresh-session')).toBe(true);
+  });
+
+  it('未来表结构（schemaVersion=2）→ 拒绝覆盖（降级不抹掉新格式）', async () => {
+    const table = new FakeTable();
+    table.records.set('guard-session', {
+      schemaVersion: 2,
+      sessionId: 'guard-session',
+      payload: '{}',
+      savedAtMs: Date.now(),
+    });
+    setSessionDomainForTests({ name: 'd', table: () => table, close: async () => {} } as never);
+    setSessionPersistenceLogger({ warn: (m) => warnLog.push(m) });
+
+    expect(await persistSession(makeState('guard-session'))).toBe(false);
+    expect((table.records.get('guard-session') as { schemaVersion: number }).schemaVersion).toBe(2);
+  });
+
+  it('payload 无法解析 → 拒绝覆盖', async () => {
+    const table = new FakeTable();
+    table.records.set('guard-session', {
+      schemaVersion: 1,
+      sessionId: 'guard-session',
+      payload: '{broken',
+      savedAtMs: Date.now(),
+    });
+    setSessionDomainForTests({ name: 'd', table: () => table, close: async () => {} } as never);
+    setSessionPersistenceLogger({ warn: (m) => warnLog.push(m) });
+
+    expect(await persistSession(makeState('guard-session'))).toBe(false);
+    expect(table.records.get('guard-session')!.payload).toBe('{broken');
   });
 });

@@ -253,6 +253,7 @@ export function buildToolDefinition(_deps: {
       maxTokensPerImage: config.meteringProfile.maxTokensPerImage,
       maxTokensBudget: intent.max_tokens_budget ?? config.maxTokensBudgetPerCall,
       maxPackets: maxPacketsEffective,
+      maxFrames: config.maxFramesPerCall,
       signal,
     });
   const stream: StreamFn = (videoPath, probeResult, intent, sessionId, signal) =>
@@ -325,7 +326,9 @@ export function apply(ctx: Context, config: PfStreamPluginConfig) {
         error === undefined
           ? ''
           : `：${error instanceof Error ? error.message : String(error)}`;
-      lg?.warn?.(`[dsh-pf-stream] ${message}${detail}`);
+      // cordis logger 按 printf 语义渲染（%s/%d 等占位符会吞掉内容、args 耗尽后
+      // 变 undefined/NaN）：预插值字符串里的 % 一律转义为 %% 还原字面量。
+      lg?.warn?.(`[dsh-pf-stream] ${message}${detail}`.replace(/%/g, '%%'));
     } catch {
       // 日志不可用不影响业务
     }
@@ -415,11 +418,16 @@ export function apply(ctx: Context, config: PfStreamPluginConfig) {
   // open 失败/设施消失时降级内存态（persistence 模块内按冷却期重试并告警）。
   // 领域句柄由本插件持有，因此用 scoped.effect 登记 close：facility 消失或插件
   // 卸载时都会走到这里，不需要宿主发 'dispose' 事件。
+  // 设施缺失告警只发一次（apply 会随配置变更重跑，避免重复刷日志）。
+  let storageDomainMissingWarned = false;
   injectOptional(['storageDomain'], (scoped) => {
     if (!config.persistSessionState) return;
     const facility = scoped.get('storageDomain') as unknown;
     if (facility === undefined || facility === null) {
-      logWarn('storageDomain 设施不可用，会话状态落盘已停用（仅内存态）');
+      if (!storageDomainMissingWarned) {
+        storageDomainMissingWarned = true;
+        logWarn('storageDomain 设施不可用，会话状态落盘已停用（仅内存态）');
+      }
       return;
     }
     scoped.effect(() => {

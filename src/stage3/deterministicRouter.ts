@@ -5,7 +5,7 @@
  * - 单时间戳 / focus=detail 逐帧 → FORM_3（1F，274 Tokens，slot F 全分辨率）；
  * - uniform + focus=motion → 每 4 帧一组 FORM_2（4P 概览），余量不足 4 帧不组包；
  * - 默认 balanced → 每组前 1~3 帧 P + 组末帧 F（FORM_1 / FORM_4）；
- * - 批量退化：目标数 ≥32 且平均间隔 ≤2s → 单遍区间解码 + 最近 PTS 帧映射；
+ * - 批量退化：块内目标数打满 CHUNK_TARGETS 且平均间隔 ≤2s → 单遍区间解码 + 最近 PTS 帧映射；
  * - 空帧回退复用最后一个有效解码帧；缺帧组按实际单元数重定形态或跳过；
  * - 解码按块推进（每块 ≤20 目标），块内帧即时打包释放，常驻内存有界。
  */
@@ -38,6 +38,12 @@ export interface RouterOptions {
    * 以为看全了实际盲区在头部）——必须与宿主 20 图上限对齐。
    */
   maxPackets: number;
+  /**
+   * 确定性抽帧单次目标帧数上限（maxFramesPerCall 同源）。uniform interval
+   * 目标数超限时改为均匀采样该上限个点（interval 是概览意图——钳制保留
+   * 意图）；不传则不设防，0.1ms 间隔即可在解码开始前撑出无界数组。
+   */
+  maxFrames: number;
   signal?: AbortSignal | undefined;
 }
 
@@ -51,35 +57,47 @@ export interface InspectionResult {
 /** 单块解码目标数上限：限制批量解码常驻内存（≤20 帧全分辨率）。 */
 const CHUNK_TARGETS = 20;
 
-/** 目标 PTS 列表推导：排序、去重、钳制。 */
+/** 目标 PTS 列表推导：排序、去重、钳制；interval 目标数受 maxTargets 钳制。 */
 export function resolveTargets(
   intent: IntentDirective,
   probe: ProbeResult,
+  maxTargets?: number | undefined,
 ): number[] {
   const last = probe.lastPtsMs;
-  if (intent.action === 'timestamps') {
-    const list = (intent.timestamps_ms ?? []).map((t) => Math.min(Math.max(Math.round(t), 0), last));
-    return dedupeSorted(list.sort((a, b) => a - b));
+  if (intent.action !== 'timestamps') {
+    // uniform（router 仅以 timestamps/uniform 两种 action 调用本函数）
+    const w0raw = intent.pts_window?.[0] ?? 0;
+    const w1raw = intent.pts_window?.[1] ?? last;
+    const w0 = Math.min(Math.max(Math.round(Math.min(w0raw, w1raw)), 0), last);
+    const w1 = Math.min(Math.max(Math.round(Math.max(w0raw, w1raw)), 0), last);
+    const out: number[] = [];
+    if (intent.frame_count != null && intent.frame_count >= 1) {
+      if (intent.frame_count === 1) return [w0];
+      const step = (w1 - w0) / (intent.frame_count - 1);
+      for (let i = 0; i < intent.frame_count; i++) out.push(Math.round(w0 + step * i));
+    } else if (intent.interval_ms != null && intent.interval_ms > 0) {
+      const span = w1 - w0;
+      const cap = Math.max(1, Math.floor(maxTargets ?? Number.POSITIVE_INFINITY));
+      const count = Math.floor(span / intent.interval_ms) + 1;
+      if (span > 0 && count > cap) {
+        // interval 概览意图：目标数超上限时改为均匀 cap 点采样——interval 无
+        // 上限时 0.1ms 间隔即可在解码开始前撑出上亿元素数组（模型可控 OOM）。
+        const step = cap > 1 ? span / (cap - 1) : 0;
+        for (let i = 0; i < cap; i++) out.push(Math.round(w0 + step * i));
+      } else {
+        for (let t = w0; t <= w1; t += intent.interval_ms) out.push(Math.round(t));
+      }
+    } else {
+      throw new PfStreamError(
+        'PFSTREAM_UNIFORM_PARAMS_MISSING',
+        'uniform 抽帧需要 interval_ms 或 frame_count 之一',
+      );
+    }
+    return dedupeSorted(out.map((t) => Math.min(t, last)));
   }
-  // uniform
-  const w0raw = intent.pts_window?.[0] ?? 0;
-  const w1raw = intent.pts_window?.[1] ?? last;
-  const w0 = Math.min(Math.max(Math.round(Math.min(w0raw, w1raw)), 0), last);
-  const w1 = Math.min(Math.max(Math.round(Math.max(w0raw, w1raw)), 0), last);
-  const out: number[] = [];
-  if (intent.frame_count != null && intent.frame_count >= 1) {
-    if (intent.frame_count === 1) return [w0];
-    const step = (w1 - w0) / (intent.frame_count - 1);
-    for (let i = 0; i < intent.frame_count; i++) out.push(Math.round(w0 + step * i));
-  } else if (intent.interval_ms != null && intent.interval_ms > 0) {
-    for (let t = w0; t <= w1; t += intent.interval_ms) out.push(Math.round(t));
-  } else {
-    throw new PfStreamError(
-      'PFSTREAM_UNIFORM_PARAMS_MISSING',
-      'uniform 抽帧需要 interval_ms 或 frame_count 之一',
-    );
-  }
-  return dedupeSorted(out.map((t) => Math.min(t, last)));
+  // timestamps
+  const list = (intent.timestamps_ms ?? []).map((t) => Math.min(Math.max(Math.round(t), 0), last));
+  return dedupeSorted(list.sort((a, b) => a - b));
 }
 
 function dedupeSorted(list: number[]): number[] {
@@ -90,9 +108,13 @@ function dedupeSorted(list: number[]): number[] {
   return out;
 }
 
-/** 批量退化判定。 */
+/**
+ * 批量退化判定：目标数达到单块上限量级（CHUNK_TARGETS，即块内已满）且平均
+ * 间隔足够密（≤2s）时，单遍区间解码摊薄 N 次点解码的寻址开销。阈值与分块
+ * 上限同源——历史上写死 32，而块内目标数恒 <32，批量路径因此从未可达。
+ */
 export function shouldBatchDecode(targets: number[]): boolean {
-  if (targets.length < 32) return false;
+  if (targets.length < CHUNK_TARGETS) return false;
   const span = targets[targets.length - 1]! - targets[0]!;
   const avgGap = span / (targets.length - 1);
   return avgGap <= 2000;
@@ -161,7 +183,7 @@ export async function runDeterministicInspection(
   intent: IntentDirective,
   options: RouterOptions,
 ): Promise<InspectionResult> {
-  const targets = resolveTargets(intent, probe);
+  const targets = resolveTargets(intent, probe, options.maxFrames);
   if (targets.length === 0) {
     return { packets: [], hintLines: [], sampledPtsMs: [] };
   }
@@ -226,17 +248,29 @@ export async function runDeterministicInspection(
     if (shouldBatchDecode(chunkTargets)) {
       const best = new Map<number, { dist: number; image: RgbImage }>();
       let firstUnfinalized = 0;
+      // 上一到达帧：目标被「一帧跨越」定稿且窗口外无 best 时，它与当前帧
+      // 恰为该目标两侧最近的帧（当前帧=首个 PTS 越过目标的帧），取较近者。
+      let prevArrival: { image: RgbImage; ptsMs: number } | null = null;
       await decodeRangeStreaming(
         videoPath,
         chunkTargets[0]!,
         chunkTargets[chunkTargets.length - 1]!,
         decodeOptions,
         (image, ptsMs) => {
-          // 帧按 PTS 升序到达：越过目标即定稿
+          // 帧按 PTS 升序到达：越过目标即定稿；无窗口 best 时回退到
+          // prev/当前帧中较近者（稀疏帧段目标会落在 +8 窗外，必须有回退）。
           while (firstUnfinalized < chunkTargets.length && ptsMs > chunkTargets[firstUnfinalized]!) {
             const t = chunkTargets[firstUnfinalized]!;
             const hit = best.get(t);
-            if (hit) frames.set(t, hit.image);
+            if (hit !== undefined) {
+              frames.set(t, hit.dist <= Math.abs(ptsMs - t) ? hit.image : image);
+            } else if (prevArrival !== null) {
+              const after = Math.abs(ptsMs - t);
+              const before = Math.abs(prevArrival.ptsMs - t);
+              frames.set(t, before <= after ? prevArrival.image : image);
+            } else {
+              frames.set(t, image);
+            }
             firstUnfinalized++;
           }
           for (let j = firstUnfinalized; j < Math.min(chunkTargets.length, firstUnfinalized + 8); j++) {
@@ -245,12 +279,16 @@ export async function runDeterministicInspection(
             const prev = best.get(t);
             if (!prev || dist < prev.dist) best.set(t, { dist, image });
           }
+          prevArrival = { image, ptsMs };
         },
       );
+      // 回调内的 prevArrival 赋值不参与 TS 控制流收窄，显式断言还原类型。
+      const tail = prevArrival as { image: RgbImage; ptsMs: number } | null;
       for (let j = firstUnfinalized; j < chunkTargets.length; j++) {
         const t = chunkTargets[j]!;
         const hit = best.get(t);
         if (hit) frames.set(t, hit.image);
+        else if (tail !== null) frames.set(t, tail.image);
       }
     } else {
       let lastValid: RgbImage | null = null;

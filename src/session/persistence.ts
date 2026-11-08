@@ -14,8 +14,10 @@
  *   schema 用 zod。spec 声明 `invalidRecords: 'backup-and-skip'`：无法解析的已存
  *   记录由后端移开而不是整个领域打不开。
  * - 记录的 `schemaVersion` 用 z.number() 而非 z.literal(1)：快照格式演进由 payload
- *   内部的 SnapshotDoc.version 承载，表结构不因 payload 演进而变；restore 侧拒绝
- *   不认识的 schemaVersion，插件降级不丢记录。
+ *   内部的 SnapshotDoc.version 承载，表结构不因 payload 演进而变。restore 侧拒绝
+ *   不认识的 schemaVersion（按无快照处理）；persist 侧覆盖守卫拒绝覆盖「磁盘谱系
+ *   较新或格式未知」的记录——降级后旧版本插件不会用 v1 记录抹掉新版本记录，
+ *   设施晚挂载/closed 竞态下回退谱系也不会覆盖磁盘较新快照。
  *
  * 降级链：宿主设施不可用（无存储后端/宿主版本过低）、open 失败、或
  * Config.persistSessionState 关闭时全部操作 no-op——行为回落到进程内内存态
@@ -121,6 +123,10 @@ let unavailableWarned = false;
 let generation = 0;
 /** init 时注入的日志出口。 */
 let logger: PersistenceLogger | undefined;
+/** shutdown 后置位：抑制在途 persist 触发的误导性「设施不可用」告警。 */
+let shutdownInProgress = false;
+/** 已就「回退谱系拒绝覆盖」告警过的会话（每进程每会话至多一次）。 */
+const regressWarned = new Set<string>();
 
 const TABLE_NAME = 'snapshots';
 /** 保留的会话记录上限：超出按 savedAtMs 从旧到新淘汰（磁盘占用有界）。 */
@@ -153,6 +159,8 @@ export async function initSessionPersistence(
     initFailed = false;
     retryAtMs = 0;
   }
+  // 有效 init 即新生命周期：解除 shutdown 抑制。
+  shutdownInProgress = false;
 
   if (domain !== undefined) {
     if (isDomainUsable(domain)) return true;
@@ -209,7 +217,7 @@ function recordOpenFailure(error: unknown): boolean {
 
 /** 设施不可用的告警只发一次（宿主可能完全不提供 storageDomain）。 */
 function warnUnavailable(): void {
-  if (unavailableWarned) return;
+  if (unavailableWarned || shutdownInProgress) return;
   unavailableWarned = true;
   logger?.warn?.('storageDomain 设施不可用，会话状态落盘已停用（仅内存态）');
 }
@@ -266,6 +274,11 @@ export function restoreSessionIfAbsent(sessionId: string): boolean {
     raw = domain.table(TABLE_NAME).get(sessionId);
   } catch (error) {
     dropDomainIfClosed(error);
+    logger?.warn?.(
+      `会话 '${sessionId}' 落盘读取异常（按无快照处理）：${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
     return false;
   }
   if (!isSnapshotRecord(raw, sessionId)) return false;
@@ -345,6 +358,74 @@ export async function persistSession(state: SessionState): Promise<boolean> {
   }
 }
 
+/**
+ * 覆盖守卫：磁盘记录的谱系必须不新于内存态才允许覆盖。
+ *
+ * 设施晚挂载/closed 竞态下，内存会话可能从空游标重建（恢复落空），直接 put
+ * 会用回退谱系覆盖磁盘上较新的快照——重启后重复消费 [旧游标, 回退点) 区间。
+ * 因此写入前对比会话级单调序号（packetSeq 主键）与全槽位最大游标（次键，
+ * 无包轮次只推进游标）：磁盘较新则拒绝覆盖；磁盘记录不认识（schemaVersion≠1、
+ * payload 解析失败、快照版本更新）同样拒绝——宁可磁盘保留旧成功点，也不用
+ * 回退谱系抹掉未知格式（同时兜住插件降级场景：新版本格式不会被 v1 记录覆盖）。
+ */
+function mayOverwriteSnapshot(raw: unknown, state: SessionState): boolean {
+  if (raw === undefined || raw === null) return true;
+  const sessionId = state.sessionId;
+  const warn = (reason: string): void => {
+    if (regressWarned.has(sessionId)) return;
+    regressWarned.add(sessionId);
+    logger?.warn?.(`会话 '${sessionId}' ${reason}`);
+  };
+  if (typeof raw !== 'object') {
+    warn('磁盘快照记录形态异常，已跳过本次落盘（保留磁盘原记录）');
+    return false;
+  }
+  const rec = raw as { schemaVersion?: unknown; payload?: unknown };
+  if (rec.schemaVersion !== 1) {
+    warn(`磁盘快照 schemaVersion=${String(rec.schemaVersion)} 非本版本可写格式，已跳过本次落盘`);
+    return false;
+  }
+  if (typeof rec.payload !== 'string') {
+    warn('磁盘快照 payload 形态异常，已跳过本次落盘（保留磁盘原记录）');
+    return false;
+  }
+  let doc: {
+    version?: unknown;
+    packetSeq?: unknown;
+    videos?: Array<[string, { lastConsumedPtsMs?: unknown }]>;
+  };
+  try {
+    doc = JSON.parse(rec.payload);
+  } catch {
+    warn('磁盘快照 payload 无法解析，已跳过本次落盘（保留磁盘原记录）');
+    return false;
+  }
+  if (doc.version !== 1) {
+    warn(`磁盘快照版本 ${String(doc.version)} 非本版本可写格式，已跳过本次落盘`);
+    return false;
+  }
+  let diskCursor = 0;
+  if (Array.isArray(doc.videos)) {
+    for (const pair of doc.videos) {
+      // 导出形态的槽位是扁平结构（cursor 字段直接在槽位上，无 cursor 包裹层）
+      const cursor = pair?.[1]?.lastConsumedPtsMs;
+      if (typeof cursor === 'number' && cursor > diskCursor) diskCursor = cursor;
+    }
+  }
+  let memCursor = 0;
+  for (const slot of state.videos.values()) {
+    if (slot.cursor.lastConsumedPtsMs > memCursor) memCursor = slot.cursor.lastConsumedPtsMs;
+  }
+  const diskSeq = typeof doc.packetSeq === 'number' ? doc.packetSeq : 0;
+  if (diskSeq > state.packetSeq || (diskSeq === state.packetSeq && diskCursor > memCursor)) {
+    warn(
+      `磁盘快照谱系较新（磁盘 packetSeq=${diskSeq}/游标 ${diskCursor}，内存 packetSeq=${state.packetSeq}/游标 ${memCursor}），拒绝覆盖——会话内存态疑似回退（设施晚挂载或恢复落空）`,
+    );
+    return false;
+  }
+  return true;
+}
+
 async function performPersist(state: SessionState): Promise<boolean> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (domain === undefined) {
@@ -355,13 +436,16 @@ async function performPersist(state: SessionState): Promise<boolean> {
     if (current === undefined) return false;
     try {
       const table = current.table(TABLE_NAME);
+      // 覆盖守卫：回退谱系/未知格式不覆盖（见 mayOverwriteSnapshot）。
+      const existing = table.get(state.sessionId);
+      if (!mayOverwriteSnapshot(existing, state)) return false;
       await table.put(state.sessionId, {
         schemaVersion: 1,
         sessionId: state.sessionId,
         payload: exportSessionSnapshot(state),
         savedAtMs: Date.now(),
       });
-      await pruneSessions(table);
+      await pruneSessions(table, state.sessionId);
       return true;
     } catch (error) {
       if (attempt === 0 && dropDomainIfClosed(error)) continue;
@@ -376,8 +460,12 @@ async function performPersist(state: SessionState): Promise<boolean> {
   return false;
 }
 
-/** 按 savedAtMs 从旧到新淘汰超出 PERSISTED_SESSION_LIMIT 的记录。 */
-async function pruneSessions(table: SessionTable): Promise<void> {
+/**
+ * 按 savedAtMs 从旧到新淘汰超出 PERSISTED_SESSION_LIMIT 的记录。
+ * `protectedKey`（刚写入的当前会话）永不淘汰——savedAtMs 取自墙钟，
+ * 时钟回退时纯排序会把刚写入的记录排进淘汰区（写完立刻被删）。
+ */
+async function pruneSessions(table: SessionTable, protectedKey?: string): Promise<void> {
   let entries: Array<[string, unknown]>;
   try {
     entries = [...table.entries()];
@@ -396,6 +484,7 @@ async function pruneSessions(table: SessionTable): Promise<void> {
     }))
     .sort((a, b) => b.savedAtMs - a.savedAtMs);
   for (const entry of aged.slice(PERSISTED_SESSION_LIMIT)) {
+    if (protectedKey !== undefined && entry.key === protectedKey) continue;
     try {
       await table.delete(entry.key);
     } catch {
@@ -455,6 +544,8 @@ export async function shutdownSessionPersistence(
   initFailed = false;
   retryAtMs = 0;
   unavailableWarned = false;
+  shutdownInProgress = true;
+  regressWarned.clear();
   if (d !== undefined) await closeQuietly(d);
 }
 
@@ -467,4 +558,6 @@ export function setSessionDomainForTests(handle: SessionDomainHandle | undefined
   initFailed = false;
   retryAtMs = 0;
   unavailableWarned = false;
+  shutdownInProgress = false;
+  regressWarned.clear();
 }

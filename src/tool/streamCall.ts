@@ -93,6 +93,11 @@ export interface StreamCallResult extends Omit<StreamRunResult, 'telemetry'> {
   audio: AudioContextSummary;
   /** 按包挂载的台词（仅含实际有台词的包）。 */
   audioByPacket: Record<number, PacketAudioMount>;
+  /**
+   * 落盘提交：由调用方在附件回传成功后调用（put 写穿后才 resolve）。
+   * 投递失败时不调用——本次推进不落盘，快照以最近一次成功投递为准。
+   */
+  commit: () => Promise<boolean>;
 }
 
 /**
@@ -134,8 +139,9 @@ async function runStreamCallLocked(
   options: StreamCallOptions,
 ): Promise<StreamCallResult> {
   // 先等待领域就绪（apply 里的 open 是异步的，首个调用可能早于它完成；
-  // 若此处不等，恢复会因 domain 尚未赋值而落空，随后用空游标覆盖旧快照）。
-  // 恢复与写入都在 per-session 串行锁内，与同会话落盘天然互斥。
+  // 若此处不等，恢复会因 domain 尚未赋值而落空）。恢复在 per-session 串行锁
+  // 内执行；落盘写入由 commit 在锁外（附件回传成功后）进行——写前覆盖守卫
+  // （persistence.mayOverwriteSnapshot）保证回退谱系不会覆盖磁盘较新快照。
   await ensureSessionPersistenceReady();
   restoreSessionIfAbsent(sessionId);
   const session = getSessionState(sessionId);
@@ -264,7 +270,10 @@ async function runStreamCallLocked(
   }
 
   // Stage 6：热区引用取自本次记录之前的历史环尾部（热区=上一次调用的包），
-  // 再记录新包 → Epoch 收敛 → 冷区规划 → 预检门控
+  // 再记录新包 → Epoch 收敛 → 冷区规划 → 预检门控。本轮新生包进入保护集：
+  // 收敛只吸收「条带已随增量投递过」的包，新生包的条带在本轮以增量包首次
+  // 投递，下一轮收敛起才有资格进入冷区（每包条带至少完整交付一次）。
+  const newPacketIds = new Set(result.packets.map((a) => a.packet.packetId));
   const hot = planHistoryRefs(slot, merged.intentId).hot;
   recordPackets(slot, session, result.packets, audioSegmentsByPacket);
   compactEpoch(
@@ -274,6 +283,7 @@ async function runStreamCallLocked(
       hotWindow: HOT_WINDOW,
       maxColdRefs: options.maxColdRefs,
       epochWindow: options.epochCompactionWindow,
+      protectIds: newPacketIds,
     },
     () => {
       session.packetSeq += 1;
@@ -283,15 +293,10 @@ async function runStreamCallLocked(
   );
   const { cold } = planHistoryRefs(slot, merged.intentId);
 
-  // 本次增量包被 Epoch 收编为冷区引用时，原始条带不再重复输出
-  // （规格《六》§3：按最终包龄输出冷区 FORM_3 与热区条带，每包只出现一次）。
-  const newPacketIds = new Set(result.packets.map((a) => a.packet.packetId));
-  const absorbedNewIds = new Set(
-    slot.epoch.coldRefs
-      .map((c) => c.sourcePacketId)
-      .filter((id) => newPacketIds.has(id)),
-  );
-  const incremental = result.packets.filter((a) => !absorbedNewIds.has(a.packet.packetId));
+  // 收敛不吸收本轮新生包（protectIds 不变式）：增量条带 100% 投递，
+  // 「按包龄输出冷区 FORM_3 与热区条带，每包条带只出现一次」的语义以
+  // 「先投递后收编」为前提。此处不再需要收编过滤。
+  const incremental = result.packets;
 
   const items: BundleItem[] = [
     ...cold.map((artifact) => ({ kind: 'cold' as const, artifact })),
@@ -337,6 +342,19 @@ async function runStreamCallLocked(
     if (mount) keptHintLines.push(audioHintLine(artifact.packet.packetId, mount));
   });
 
+  // 单帧/零帧视频（末帧 PTS=0）：流式通道无可发包（单帧不足以组包），
+  // 给可行动指引而非静默空结果。
+  if (
+    result.telemetry.stopReason === 'end_of_stream' &&
+    keptPackets.length === 0 &&
+    probe.lastPtsMs === 0
+  ) {
+    keptHintLines.push(
+      '该视频仅含单帧或零帧（末帧 PTS=0）：流式通道没有可发包。' +
+        "请改用 action='timestamps'，timestamps_ms=[0] 检视该帧。",
+    );
+  }
+
   // 冷区引用的台词挂载（Epoch 内 100% 保留）
   const audioByPacket: Record<number, PacketAudioMount> = {};
   for (const [pid, mount] of newMounts) {
@@ -373,10 +391,11 @@ async function runStreamCallLocked(
         };
   audioContext.mountedPackets = Object.keys(audioByPacket).length;
 
-  // 成功路径落盘：快照写穿（put 在后端确认持久后才 resolve）后再返回结果，
-  // 重启后续接点不回退。失败路径不落盘（失败调用在内存中也只提前合并了
-  // 意图，快照以最近一次成功调用为准）。
-  await persistSession(session);
+  // 落盘改为「投递成功后提交」：本函数只产出结果与 commit 闭包，handler 在
+  // 附件回传（savePacketImages 可抛）成功后才调用 commit——这样「失败路径
+  // 不落盘」对整次工具调用成立：附件失败时本次推进不落盘，重启后从上一
+  // 成功点续接（内存照常推进，磁盘以最近一次成功投递为准）。
+  const commit = (): Promise<boolean> => persistSession(session);
 
   return {
     ...result,
@@ -389,6 +408,7 @@ async function runStreamCallLocked(
     appliedIntentId: merged.intentId,
     audio: audioContext,
     audioByPacket,
+    commit,
   };
 }
 

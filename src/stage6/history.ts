@@ -103,14 +103,26 @@ export function coldRefHintLine(plan: ColdRefPlan): string {
 /**
  * 冷区准入：热区之外的带 F 锚点历史包，从新到旧取 maxColdRefs 个。
  * 未入选者与 FORM_2/心跳类纯过程包在本轮收敛后释放（从环中移除）。
+ *
+ * `excludeIds`（本轮新生包）不参与准入：包的条带必须先投递过才有资格被收编
+ * （「每包条带只出现一次」以先投递为前提），否则该包的 P 单元内容永不交付。
  */
 export function selectColdCandidates(
   ring: HistoryEntry[],
   hotWindow: number,
   maxColdRefs: number,
+  excludeIds?: ReadonlySet<number>,
 ): HistoryEntry[] {
+  // slice(-0) === slice(0)：maxColdRefs=0（配置允许，语义为不保留冷区）
+  // 会退化为全保留，必须显式拦截。
+  if (maxColdRefs <= 0) return [];
   const coldZone = ring.slice(0, Math.max(0, ring.length - hotWindow));
-  const anchored = coldZone.filter((e) => e.packet.anchorFId != null && e.anchorBytes != null);
+  const anchored = coldZone.filter(
+    (e) =>
+      e.packet.anchorFId != null &&
+      e.anchorBytes != null &&
+      (!excludeIds || !excludeIds.has(e.packet.packetId)),
+  );
   // 从新到旧保留 maxColdRefs 个（规格：按原始包龄从新到旧保留，超出淘汰）
   return anchored.slice(-maxColdRefs);
 }
@@ -120,12 +132,20 @@ export function selectColdCandidates(
  *
  * 每轮追加新包后调用：累计满 epochWindow 个新包（或冷区引用首次建立）时
  * 重建冷区引用并释放未入选条目；窗口内复用既有 ColdRefPlan（packetId 与
- * 字节零变动）。返回是否发生了收敛（recompacted）。
+ * 字节零变动）。本轮新生包（protectIds）不收编也不释放——条带必须先随增量
+ * 投递过一次，下一轮收敛才有资格进入冷区（保证「每包条带只出现一次」以
+ * 「先投递后收编」为前提）。返回是否发生了收敛（recompacted）。
  */
 export function compactEpoch(
   slot: SessionVideoState,
   session: SessionState,
-  options: { hotWindow?: number; maxColdRefs: number; epochWindow: number },
+  options: {
+    hotWindow?: number;
+    maxColdRefs: number;
+    epochWindow: number;
+    /** 本轮新生包 packetId 集合：本轮不收编、不释放（条带须先投递）。 */
+    protectIds?: ReadonlySet<number>;
+  },
   allocPacketId: () => number,
   appliedIntentId: string,
 ): boolean {
@@ -133,7 +153,7 @@ export function compactEpoch(
   const ring = slot.history.packets;
 
   if (slot.epoch.coldRefs.length === 0 || slot.epoch.pendingNew >= options.epochWindow) {
-    const keep = selectColdCandidates(ring, hotWindow, options.maxColdRefs);
+    const keep = selectColdCandidates(ring, hotWindow, options.maxColdRefs, options.protectIds);
     const keepSet = new Set(keep.map((e) => e.packet.packetId));
     const hotSet = new Set(ring.slice(ring.length - hotWindow).map((e) => e.packet.packetId));
 
@@ -159,15 +179,24 @@ export function compactEpoch(
       );
     }
 
-    // 释放：不在保留集（冷区）也不在热区的条目；FUnitCache 同步清理
+    // 释放：不在保留集（冷区）、不在热区、也不在本轮保护集的条目；
+    // FUnitCache 同步清理。本轮新生包（protectIds）即便滑出热区也保留在环中，
+    // 其条带已随本轮增量投递，下一轮收敛起才有资格进入冷区。
+    const protectSet = options.protectIds;
     const released = ring.filter(
-      (e) => !keepSet.has(e.packet.packetId) && !hotSet.has(e.packet.packetId),
+      (e) =>
+        !keepSet.has(e.packet.packetId) &&
+        !hotSet.has(e.packet.packetId) &&
+        (!protectSet || !protectSet.has(e.packet.packetId)),
     );
     for (const e of released) {
       if (e.packet.anchorFId != null) session.fUnitCache.delete(e.packet.anchorFId);
     }
     slot.history.packets = ring.filter(
-      (e) => keepSet.has(e.packet.packetId) || hotSet.has(e.packet.packetId),
+      (e) =>
+        keepSet.has(e.packet.packetId) ||
+        hotSet.has(e.packet.packetId) ||
+        (!!protectSet && protectSet.has(e.packet.packetId)),
     );
     slot.epoch = { pendingNew: 0, coldRefs: plans };
     return true;

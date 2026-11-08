@@ -190,6 +190,10 @@ export async function handleToolCall(
     }
     const stream = await deps.stream(args.video_path, probeResult, intent, resolveSessionId(exec), exec?.signal);
     const packets = await withPacketImages(stream.packets, deps.attachImages);
+    // 附件回传成功后才提交落盘（失败路径不落盘；put 写穿后才 resolve，失败
+    // 不抛出）。落盘时点从 streamCall 内部后移到此处，游标推进跨重启的可见性
+    // 以「投递成功」为准。
+    if (stream.commit !== undefined) await stream.commit();
     const audioByPacket = stream.audioByPacket;
     const packetsWithAudio = audioByPacket
       ? packets.map((p) => {
@@ -216,6 +220,12 @@ export async function handleToolCall(
         `已达单次调用墙钟上限（本次推进 ${stream.packets.length} 包后停止）；` +
           '窗口跨度过大时解码会先于预算门触及墙钟。请用 pts_window 分段推进（建议单窗跨度 ≤240s），' +
           '下次调用将从当前游标继续。',
+      );
+    }
+    if (stream.telemetry.stopReason === 'budget_packets') {
+      hintLines.push(
+        `已达单次调用包数上限（本次推进 ${stream.packets.length} 包后停止）；` +
+          '请缩小 pts_window 或分批调用，下次调用将从当前游标继续。',
       );
     }
     return {
