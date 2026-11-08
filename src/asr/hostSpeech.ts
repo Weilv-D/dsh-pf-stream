@@ -246,10 +246,4 @@ export function resolveHostSpeechLanguage(
   return { supported: false, language: null };
 }
 
-/** 语言是否被 provider 支持；null/空白/auto 由官方自动识别。 */
-export function hostSpeechSupportsLanguage(
-  languages: readonly string[],
-  language: string | null | undefined,
-): boolean {
-  return resolveHostSpeechLanguage(languages, language).supported;
-}
+/** 语言是否被 provider 支持：resolveHostSpeechLanguage(...).supported。 */

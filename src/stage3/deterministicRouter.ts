@@ -188,6 +188,9 @@ export async function runDeterministicInspection(
     return { packets: [], hintLines: [], sampledPtsMs: [] };
   }
 
+  // 有意不传 workMaxEdge：确定性通道逐帧解码（内存天然有界），全分辨率保证
+  // RoI 裁剪与抽帧精度；streamWorkMaxEdge 仅约束流式通道的解码管线（Config
+  // 描述已限定「流式」口径）。
   const decodeOptions = {
     ffmpegPath: options.ffmpegPath,
     ffprobePath: options.ffprobePath,

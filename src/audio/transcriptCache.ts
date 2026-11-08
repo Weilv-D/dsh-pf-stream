@@ -6,7 +6,7 @@
  * 值 = 已完成转写的区间列表（subtitle 提取为本地快操作，不走缓存）。
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { stat } from 'node:fs/promises';
@@ -77,7 +77,7 @@ export async function readTranscriptCache(
   }
 }
 
-/** 原子写入：先写 .tmp 再 rename。 */
+/** 原子写入：先写 .tmp 再 rename；tmp 名掺随机后缀防同进程并发覆写。 */
 export async function writeTranscriptCache(
   cacheDir: string,
   fingerprint: string,
@@ -86,7 +86,7 @@ export async function writeTranscriptCache(
   const doc: CacheDoc = { version: CACHE_VERSION, fingerprint, intervals };
   await mkdir(cacheDir, { recursive: true });
   const file = cacheFileFor(cacheDir, fingerprint);
-  const tmp = `${file}.${process.pid}.tmp`;
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(tmp, JSON.stringify(doc), 'utf8');
   try {
     await rename(tmp, file);

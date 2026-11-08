@@ -7,7 +7,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: publish-${{ github.ref }}
+  group: publish-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
@@ -36,6 +36,10 @@ jobs:
           case "$VERSION" in
             *-*)
               echo "::error::版本号 $VERSION 含预发布后缀。正式发布通道只接受正式版本号；预发布走本地 npm publish --tag next"
+              exit 1
+              ;;
+            *+*)
+              echo "::error::版本号 $VERSION 含构建元数据（+），npm 会作为独立条目接受并污染 dist-tags。正式版本号形如 X.Y.Z"
               exit 1
               ;;
           esac
@@ -130,8 +134,8 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
-      - name: 升级 npm 至 11（OIDC 发布）
-        run: npm install -g npm@11
+      - name: 升级 npm 至 11.10.1（OIDC 发布；钉扎精确版本，升级走显式提交）
+        run: npm install -g npm@11.10.1
 
       - name: 下载 tarball
         uses: actions/download-artifact@v4

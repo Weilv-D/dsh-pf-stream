@@ -47,7 +47,10 @@ function readBody(request: WebRequestLike): Promise<string> {
     request.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > MAX_BODY_BYTES) {
-        reject(new Error('请求体过大'));
+        // 超限即断开：不再消费后续数据，回 413（而非 500）
+        const oversize = new Error('请求体过大') as Error & { oversize?: boolean };
+        oversize.oversize = true;
+        reject(oversize);
         return;
       }
       chunks.push(chunk);
@@ -218,7 +221,13 @@ export function registerApi(deps: ApiDeps): () => void {
       let body: Record<string, unknown> = {};
       const raw = await readBody(request);
       if (raw.trim() !== '') {
-        const parsed: unknown = JSON.parse(raw);
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          send(response, 400, { ok: false, error: 'invalid_json' });
+          return;
+        }
         if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
           send(response, 400, { ok: false, error: 'invalid_body' });
           return;
@@ -323,6 +332,12 @@ export function registerApi(deps: ApiDeps): () => void {
 
       send(response, 404, { ok: false, error: 'not_found' });
     })().catch((error: unknown) => {
+      // 超限读取：回 413 并断开连接（不再消费后续数据）
+      if ((error as { oversize?: boolean } | null)?.oversize === true) {
+        send(response, 413, { ok: false, error: 'payload_too_large' });
+        (response as { destroy?: () => void }).destroy?.();
+        return;
+      }
       send(response, 500, {
         ok: false,
         error: 'internal_error',

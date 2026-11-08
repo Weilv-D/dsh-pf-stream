@@ -35,7 +35,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "verify:host": "node scripts/verify-host-contract.mjs",
     "check:package": "node scripts/check-package.mjs",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

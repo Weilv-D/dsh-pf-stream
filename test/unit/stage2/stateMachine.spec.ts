@@ -9,7 +9,6 @@ import {
   SchmittMachine,
   beatsArena,
   createClarityState,
-  isLocalPeak,
   updateClarity,
   type SchmittThresholds,
 } from '../../../src/stage2/stateMachine.js';
@@ -111,26 +110,6 @@ describe('EMA 预热与 PEAK 判定（用例 8）', () => {
     updateClarity(cs, 0.4);
     updateClarity(cs, 0.4, { resetWarmup: true });
     expect(cs.warmupLeft).toBe(2);
-  });
-
-  it('局部波峰：ρ_{t-1}≥ρ_{t-2} 且 >ρ_t 且 ≥ρ_min', () => {
-    const cs = createClarityState();
-    updateClarity(cs, 0.4);
-    updateClarity(cs, 0.5); // 上升
-    updateClarity(cs, 0.4); // 回落
-    expect(isLocalPeak(cs, 1.05)).toBe(true);
-    expect(isLocalPeak(cs, 1.5)).toBe(false); // ρ_min 不满足
-    updateClarity(cs, 0.3);
-    updateClarity(cs, 0.35); // 上升
-    updateClarity(cs, 0.36); // 仍上升 → 非波峰
-    expect(isLocalPeak(cs, 1.05)).toBe(false);
-  });
-
-  it('历史不足 3 帧不判波峰（预热保护）', () => {
-    const cs = createClarityState();
-    updateClarity(cs, 0.4);
-    updateClarity(cs, 0.3);
-    expect(isLocalPeak(cs, 1.0)).toBe(false);
   });
 
   it('擂台：无记录恒真，严格更优才击败', () => {

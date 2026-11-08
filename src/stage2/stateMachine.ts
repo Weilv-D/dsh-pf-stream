@@ -212,16 +212,6 @@ export function updateClarity(
   return rho;
 }
 
-/**
- * PEAK 局部波峰判定：ρ_{t-1} ≥ ρ_{t-2} 且 ρ_{t-1} > ρ_t 且 ρ_{t-1} ≥ ρ_min。
- * 预热期（warmupLeft > 0 或历史不足 3 帧）不判波峰（返回 false）。
- */
-export function isLocalPeak(cs: ClarityState, rhoMin: number): boolean {
-  if (cs.rhoHistory.length < 3) return false;
-  const [prev2, prev1, curr] = [cs.rhoHistory[0]!, cs.rhoHistory[1]!, cs.rhoHistory[2]!];
-  return prev1 >= prev2 && prev1 > curr && prev1 >= rhoMin;
-}
-
 /** 擂台比较：候选是否击败当前记录（ρ 更高；无记录时恒真）。 */
 export function beatsArena(candidate: { rho: number } | null, rho: number): boolean {
   return candidate === null || rho > candidate.rho;

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  hostSpeechSupportsLanguage,
   probeHostSpeech,
   resolveHostSpeechLanguage,
   type HostSpeechService,
@@ -275,18 +274,18 @@ describe('probeHostSpeech', () => {
   });
 });
 
-describe('hostSpeechSupportsLanguage', () => {
+describe('语言支持判定（resolveHostSpeechLanguage.supported）', () => {
   it('auto/null 总是支持', () => {
-    expect(hostSpeechSupportsLanguage(['zh'], null)).toBe(true);
-    expect(hostSpeechSupportsLanguage(['zh'], 'auto')).toBe(true);
+    expect(resolveHostSpeechLanguage(['zh'], null).supported).toBe(true);
+    expect(resolveHostSpeechLanguage(['zh'], 'auto').supported).toBe(true);
   });
 
   it('接受 zh-CN 到 zh 的归一化', () => {
-    expect(hostSpeechSupportsLanguage(['auto', 'zh'], 'zh-CN')).toBe(true);
+    expect(resolveHostSpeechLanguage(['auto', 'zh'], 'zh-CN').supported).toBe(true);
   });
 
   it('不支持的语言返回 false', () => {
-    expect(hostSpeechSupportsLanguage(['auto', 'zh'], 'ja')).toBe(false);
+    expect(resolveHostSpeechLanguage(['auto', 'zh'], 'ja').supported).toBe(false);
   });
 });
 

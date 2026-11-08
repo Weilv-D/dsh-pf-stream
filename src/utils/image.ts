@@ -62,13 +62,15 @@ export function bilinearResize(src: RgbImage, dw: number, dh: number): RgbImage 
   const maxSX = (src.width - 1) * FX;
   const maxSY = (src.height - 1) * FX;
   for (let v = 0; v < dh; v++) {
-    const fy = (2 * v + 1) * stepY >> 1; // (v+0.5)*stepY，定点
+    // float64 精确域内计算（(2v+1)*stepY ≤ 2^53）：>>1 的 ToInt32 截断在
+    // 源高 ≳16K 时会产生垃圾坐标（确定性画面污染），改用除法语义等价。
+    const fy = Math.floor(((2 * v + 1) * stepY) / 2); // (v+0.5)*stepY，定点
     const cy = Math.min(Math.max(fy - (FX >> 1), 0), maxSY);
     const y0 = cy >> 16;
     const y1 = Math.min(y0 + 1, src.height - 1);
     const wy = (cy - (y0 << 16)) >> 8; // 0..256
     for (let u = 0; u < dw; u++) {
-      const fx = (2 * u + 1) * stepX >> 1;
+      const fx = Math.floor(((2 * u + 1) * stepX) / 2);
       const cx = Math.min(Math.max(fx - (FX >> 1), 0), maxSX);
       const x0 = cx >> 16;
       const x1 = Math.min(x0 + 1, src.width - 1);

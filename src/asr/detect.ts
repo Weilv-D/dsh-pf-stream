@@ -145,7 +145,3 @@ export function detectLocalEngine(input: DetectInput): LocalEngineSnapshot {
     reason: '尚未安装本地转写引擎',
   };
 }
-
-export function engineLabel(engine: LocalEngineId): string {
-  return LOCAL_ENGINES.find((entry) => entry.id === engine)?.label ?? engine;
-}

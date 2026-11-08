@@ -20,6 +20,7 @@ import {
   GRAY_W,
   GRID_COLS,
   blockSobelMeans,
+  frameSobelMean,
   grayHistogram16,
   histL1Distance,
   sobelMagnitude,
@@ -129,9 +130,7 @@ export function perceiveFrame(
 ): PerceptionResult {
   const mag = sobelMagnitude(gray);
   const blockSobel = blockSobelMeans(mag);
-  let g = 0;
-  for (let i = 0; i < mag.length; i++) g += mag[i]!;
-  g /= mag.length;
+  const g = frameSobelMean(mag);
 
   const hist = grayHistogram16(gray);
   const histL1 = ctx.prevHist ? histL1Distance(hist, ctx.prevHist) : 0;

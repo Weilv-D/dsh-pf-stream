@@ -111,22 +111,25 @@ export function packCanvas(
     if (options.renderVisualId) drawIdBadge(image, 0, 0, u.globalId);
     return { ...u, image };
   });
+  // 按尺度分区放置（不依赖调用方的 P 前 F 后顺序约定）：F 恒落全画幅槽位
+  const markedP = marked.filter((u) => u.scale === '1x1_P');
+  const markedF = marked.filter((u) => u.scale === '2x2_F');
 
   if (form === 'FORM_1_STANDARD_STRIP') {
     if (pUnits.length !== 4 || !fUnit) throw new Error('FORM_1 需要 4P+1F');
     for (let i = 0; i < 4; i++) {
-      const u = marked[i]!;
+      const u = markedP[i]!;
       const { x, y } = { x: (i % 2) * 336, y: Math.floor(i / 2) * 336 };
       placements.push({ x, y, image: u.image });
       descriptors.push(descriptor(u, x, y));
     }
-    const f = marked[4]!;
+    const f = markedF[0]!;
     placements.push({ x: 672, y: 0, image: f.image });
     descriptors.push(descriptor(f, 672, 0));
   } else if (form === 'FORM_2_COMPACT_4P') {
     if (pUnits.length !== 4) throw new Error('FORM_2 需要 4P');
     for (let i = 0; i < 4; i++) {
-      const u = marked[i]!;
+      const u = markedP[i]!;
       const x = (i % 2) * 336;
       const y = Math.floor(i / 2) * 336;
       placements.push({ x, y, image: u.image });
@@ -134,20 +137,20 @@ export function packCanvas(
     }
   } else if (form === 'FORM_3_COMPACT_1F') {
     if (!fUnit) throw new Error('FORM_3 需要 1F');
-    const f = marked[0]!;
+    const f = markedF[0]!;
     placements.push({ x: 0, y: 0, image: f.image });
     descriptors.push(descriptor(f, 0, 0));
   } else {
     // FORM_4_PARTIAL_STRIP：1~3P + 1F
     if (pUnits.length < 1 || pUnits.length > 3 || !fUnit) throw new Error('FORM_4 需要 1~3P+1F');
     for (let i = 0; i < pUnits.length; i++) {
-      const u = marked[i]!;
+      const u = markedP[i]!;
       const x = (i % 2) * 336;
       const y = Math.floor(i / 2) * 336;
       placements.push({ x, y, image: u.image });
       descriptors.push(descriptor(u, x, y));
     }
-    const f = marked[marked.length - 1]!;
+    const f = markedF[0]!;
     placements.push({ x: 672, y: 0, image: f.image });
     descriptors.push(descriptor(f, 672, 0));
   }

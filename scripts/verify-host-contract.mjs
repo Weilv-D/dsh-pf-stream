@@ -57,32 +57,32 @@ const ALLOWED_KEYS = new Set([
   'items', 'enum', 'const', 'description',
 ]);
 
-function walkSchema(node, path) {
+function walkSchema(node, path, violations) {
   if (Array.isArray(node)) {
-    node.forEach((child, i) => walkSchema(child, `${path}[${i}]`));
+    node.forEach((child, i) => walkSchema(child, `${path}[${i}]`, violations));
     return;
   }
   if (node !== null && typeof node === 'object') {
     for (const [key, value] of Object.entries(node)) {
       if (!ALLOWED_KEYS.has(key)) {
-        failures.push(`schema 关键字越界：${path}.${key}`);
+        violations.push(`schema 关键字越界：${path}.${key}`);
       } else if (key === 'properties' && value !== null && typeof value === 'object') {
         // properties 的 value 是「属性名 → 值 schema」映射：属性名不检查，逐值递归
         for (const [prop, child] of Object.entries(value)) {
-          walkSchema(child, `${path}.properties.${prop}`);
+          walkSchema(child, `${path}.properties.${prop}`, violations);
         }
       } else {
-        walkSchema(value, `${path}.${key}`);
+        walkSchema(value, `${path}.${key}`, violations);
       }
     }
   }
 }
-const beforeFailures = failures.length;
+const schemaKeyViolations = [];
 // 根对象自带 type/properties/required/additionalProperties；逐属性值 schema 内部检查
 for (const [prop, schema] of Object.entries(toolParameters.properties)) {
-  walkSchema(schema, `toolParameters.properties.${prop}`);
+  walkSchema(schema, `toolParameters.properties.${prop}`, schemaKeyViolations);
 }
-check('工具 schema 关键字全部落在允许集', failures.length === beforeFailures);
+check('工具 schema 关键字全部落在允许集', schemaKeyViolations.length === 0, schemaKeyViolations.join('；'));
 
 // 必填字段存在（root schema 形态）
 check(
@@ -141,14 +141,56 @@ const NATIVE_HINTS = /node-gyp|node-pre-gyp|prebuild-install|node-addon-api/i;
 let nativeViolations = '';
 try {
   const lockRaw = readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8');
-  // 粗筛：pngjs / zod 闭包（在 pnpm-lock 中无原生依赖块）
-  if (NATIVE_HINTS.test(lockRaw)) {
-    // pnpm-lock 可能包含其他工作区包；逐包检查各自段
-    for (const name of ['pngjs', 'zod']) {
-      const section = lockRaw.split(new RegExp(`${name}@`)).slice(1).join('');
-      if (NATIVE_HINTS.test(section)) nativeViolations = `${name} 闭包含原生构建工具`;
+  // 解析 packages:/snapshots: 段的条目块（2 空格缩进键 `name@version:`），
+  // 从 pngjs/zod 沿块内 6 空格依赖键做传递闭包，只扫闭包块的构建链提示。
+  const lines = lockRaw.split(/\r?\n/);
+  const blocks = new Map();
+  let section = null;
+  let currentKey = null;
+  let currentLines = [];
+  const flush = () => {
+    if (currentKey !== null) blocks.set(currentKey, currentLines.join('\n'));
+    currentKey = null;
+    currentLines = [];
+  };
+  for (const line of lines) {
+    const sec = /^(importers|packages|snapshots):\s*$/.test(line);
+    if (sec) {
+      flush();
+      section = line.replace(/:.*$/, '');
+      continue;
+    }
+    if (section === null) continue;
+    const entry = /^ {2}(\S+):$/.exec(line);
+    if (entry) {
+      flush();
+      currentKey = entry[1];
+      continue;
+    }
+    if (currentKey !== null) currentLines.push(line);
+  }
+  flush();
+  const namesOf = (key) => key.slice(0, key.lastIndexOf('@'));
+  const closure = new Set(['pngjs', 'zod']);
+  const queue = ['pngjs', 'zod'];
+  while (queue.length > 0) {
+    const name = queue.shift();
+    for (const [key, text] of blocks) {
+      if (!key.startsWith(`${name}@`)) continue;
+      for (const m of text.matchAll(/^ {6}([^ :\s]+):/gm)) {
+        if (!closure.has(m[1])) {
+          closure.add(m[1]);
+          queue.push(m[1]);
+        }
+      }
     }
   }
+  const violations = [];
+  for (const [key, text] of blocks) {
+    const name = namesOf(key);
+    if (closure.has(name) && NATIVE_HINTS.test(text)) violations.push(name);
+  }
+  if (violations.length > 0) nativeViolations = `运行时依赖闭包含原生构建链：${[...new Set(violations)].join('、')}`;
 } catch {
   // lock 文件缺失不视为违规（本地开发生成前）
 }

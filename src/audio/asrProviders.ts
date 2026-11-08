@@ -381,22 +381,4 @@ function parseCliOutput(stdout: string, chunkMs: number): RawSegment[] {
   return [{ startMs: 0, endMs: chunkMs, text: trimmed }];
 }
 
-/** provider 分派（锚定到绝对 PTS 由路由层完成）。 */
-export async function transcribeChunk(
-  input: AsrChunkInput,
-  deps: AsrTranscribeDeps,
-  tempDir?: string,
-): Promise<RawSegment[]> {
-  switch (deps.settings.provider) {
-    case 'openai_verbose':
-      return transcribeVerbose(input, deps);
-    case 'openai_basic':
-      return transcribeBasic(input, deps);
-    case 'local_cli':
-      return transcribeLocalCli(input, deps, tempDir);
-    case 'host_sensevoice':
-      return transcribeHostSpeech(input, deps);
-    default:
-      throw new AsrRequestError(`未知 provider：${deps.settings.provider}`, 'ASR_PROVIDER');
-  }
-}
+/** provider 分派（锚定到绝对 PTS 由路由层完成）；asrRouter 内联了同款分派。 */

@@ -8,6 +8,7 @@
  */
 
 import type { IntentDirective, RoiHint } from '../types.js';
+import { PfStreamError } from '../errors.js';
 
 export interface NormalizedIntent {
   intent: IntentDirective;
@@ -15,11 +16,15 @@ export interface NormalizedIntent {
   normalizedFrom: string[];
 }
 
-/** 数值或字符串时间 → 毫秒（判秒规则见模块注释）。 */
+/** 数值或字符串时间 → 毫秒（判秒规则见模块注释；durationMs 实参为 lastPtsMs 上界）。 */
 export function toMs(value: number | string, durationMs: number): number {
   const n = typeof value === 'string' ? Number.parseFloat(value) : value;
-  if (!Number.isFinite(n)) throw new Error(`时间值无法解析：${String(value)}`);
-  const secThreshold = (durationMs / 1000) * 2;
+  if (!Number.isFinite(n)) {
+    throw new PfStreamError('PFSTREAM_ARGS_PTS', `时间值无法解析：${String(value)}`);
+  }
+  // 上界缺失（=0）时退保守阈值（≤7200 判秒），避免把秒值压成毫秒级空窗；
+  // 该退化态下 adapter 的 clampMs 反正会把窗口钳到 [0,0]，此处保证语义合理。
+  const secThreshold = durationMs > 0 ? (durationMs / 1000) * 2 : 7200;
   const ms = n <= secThreshold ? n * 1000 : n;
   return Math.round(ms);
 }

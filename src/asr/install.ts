@@ -256,6 +256,12 @@ export class LocalAsrInstaller {
 
   cancel(): void {
     if (this.job === null) return;
+    // 终态（done/failed/cancelled）不覆写：已完成任务被改标「已取消」会与磁盘
+    // 事实（引擎/模型已就绪）矛盾；仅进行中态（含 preparing）可取消。
+    const phase = this.job.phase;
+    const active =
+      phase === 'preparing' || phase === 'downloading' || phase === 'verifying' || phase === 'extracting';
+    if (!active) return;
     this.patch({ phase: 'cancelled', message: '已取消', finishedAt: Date.now() });
     this.controller?.abort();
     this.controller = null;

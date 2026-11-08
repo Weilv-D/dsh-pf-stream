@@ -228,6 +228,7 @@ Local transcription is timed per chunk; raise `audio.asr.local.timeoutMs` (and `
 | `PFSTREAM_DECODE_EMPTY` | No decodable frame at the target time (including exhausted fallbacks after end avoidance) |
 | `PFSTREAM_DECODE_STALL` | No frame progress for 30 s; decode terminated |
 | `PFSTREAM_UNIFORM_PARAMS_MISSING` | `uniform` lacks both `interval_ms` and `frame_count` |
+| `PFSTREAM_ACTION_UNAVAILABLE` | Requested action channel unavailable (missing dependency in assembly) |
 | `PFSTREAM_CANVAS_EDGE_OVER_LIMIT` | Canvas edge exceeds the pixel limit |
 | `PFSTREAM_CANVAS_TOKEN_OVER_LIMIT` | Canvas billing exceeds the per-image token limit |
 

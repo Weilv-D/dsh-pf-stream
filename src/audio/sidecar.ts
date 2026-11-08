@@ -36,15 +36,6 @@ const ASSIST_DENSE_CPS = 5;
 const ASSIST_MIN_SUM_D = 0.15;
 const MAX_HINT_SEGMENTS = 3;
 
-export const ASSIST_FOCUS_CONSTANTS = {
-  staticMs: ASSIST_STATIC_MS,
-  sinceFMs: ASSIST_SINCE_F_MS,
-  pauseAfterIslandMs: ASSIST_PAUSE_AFTER_ISLAND_MS,
-  islandRecentMs: ASSIST_ISLAND_RECENT_MS,
-  denseIslandMs: ASSIST_DENSE_ISLAND_MS,
-  denseCps: ASSIST_DENSE_CPS,
-  minSumD: ASSIST_MIN_SUM_D,
-};
 
 /**
  * env（DSH_ASR_API_KEY）> 凭据存储 > Config；引擎按 engine 语义解析
@@ -228,7 +219,10 @@ export async function runAudioSidecar(
       deadlineAt,
     );
     const rate = speechRateCps(result.segments, vad);
-    const status: AudioStatus = result.failedChunks > 0 ? 'partial' : 'ok';
+    // 全灭（全部块失败且零产出）报 error：模型需要区分「转出一半」与「一行没转出来」
+    const status: AudioStatus = result.failedChunks > 0
+      ? (result.segments.length === 0 ? 'error' : 'partial')
+      : 'ok';
     return {
       context: {
         status,

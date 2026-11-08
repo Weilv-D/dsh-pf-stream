@@ -107,12 +107,6 @@ export interface ToolDeps {
   limits?: { maxPackets: number; maxTokensBudget: number; maxFrames: number } | undefined;
 }
 
-export function resolveAction(args: ToolCallArgs): NonNullable<IntentDirective['action']> {
-  if (args.intent?.action) return args.intent.action;
-  if (args.intent?.probe_only === true || args.probe_only === true) return 'probe';
-  return 'pf_stream';
-}
-
 /** 给发包元数据补上 `image` 附件引用；无引用时只回显元数据。 */
 async function withPacketImages(
   artifacts: PacketArtifact[],
