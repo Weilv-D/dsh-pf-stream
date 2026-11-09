@@ -55,6 +55,8 @@ export function createSessionState(sessionId: string): SessionState {
     packetSeq: 0,
     intentSeq: 0,
     heartbeatSeq: 0,
+    // 进程内变更序号（投递失败回滚的并发守卫）；不进快照，重建置 0。
+    mutationSeq: 0,
   };
 }
 

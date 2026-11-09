@@ -65,7 +65,13 @@ describe('case11: 两级历史引用流转', () => {
     // 热区元数据
     for (const p of packets.filter((x) => x.historyMode === 'full_strip_ref')) {
       expect(p.historyMode).toBe('full_strip_ref');
-      expect(p.stripSha256).toBeTruthy();
+      // FORM_3（单 F 无独立条带载体）的 stripSha256 恒 null——热区交付的是
+      // imageBytes 本体；其余形态必须携带条带哈希。
+      if (p.layoutForm === 'FORM_3_COMPACT_1F') {
+        expect(p.stripSha256).toBeNull();
+      } else {
+        expect(p.stripSha256).toBeTruthy();
+      }
       expect(p.anchorOnlyRefPacketId).toBeNull();
       expect(p.spatialRemap).toBeNull();
     }

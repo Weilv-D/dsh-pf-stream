@@ -183,7 +183,16 @@ export async function handleToolCall(
       throw new PfStreamError('PFSTREAM_ACTION_UNAVAILABLE', `action '${action}' 通道不可用`);
     }
     const stream = await deps.stream(args.video_path, probeResult, intent, resolveSessionId(exec), exec?.signal);
-    const packets = await withPacketImages(stream.packets, deps.attachImages);
+    let packets: ToolResult[];
+    try {
+      packets = await withPacketImages(stream.packets, deps.attachImages);
+    } catch (error) {
+      // 附件回传失败：回滚本次内存推进（游标/序号/历史环/快照全部还原到
+      // 调用前），下一调用从同一游标重新消费该窗口——「失败调用零状态副作用」。
+      // 并发守卫（mutationSeq）在 rollback 内部：期间有后续调用推进则跳过。
+      stream.rollback?.();
+      throw error;
+    }
     // 附件回传成功后才提交落盘（失败路径不落盘；put 写穿后才 resolve，失败
     // 不抛出）。落盘时点从 streamCall 内部后移到此处，游标推进跨重启的可见性
     // 以「投递成功」为准。

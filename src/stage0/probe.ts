@@ -12,7 +12,7 @@ import { stat } from 'node:fs/promises';
 import type { ProbeResult } from '../types.js';
 import { PfStreamError } from '../errors.js';
 import { execFile } from './ffmpeg.js';
-import { clamp, estimateLastPtsMs, parseRational, secondsToMs } from '../utils/pts.js';
+import { estimateLastPtsMs, parseRational, secondsToMs } from '../utils/pts.js';
 
 const PROBE_TIMEOUT_MS = 60_000;
 
@@ -162,7 +162,10 @@ async function probeLastFramePtsMs(
         signal: options.signal,
       });
       parsed = JSON.parse(stdout as string) as FrameProbeJson;
-    } catch {
+    } catch (error) {
+      // 取消必须穿透：吞掉 EXEC_ABORT 会让取消后 probeVideo「成功」返回，
+      // 调用方拿一个已取消的探针继续解码（超时等真实探测失败仍按轮次跳过）。
+      if (error instanceof PfStreamError && error.code === 'PFSTREAM_EXEC_ABORT') throw error;
       continue;
     }
     const frames = parsed.frames ?? [];
@@ -170,7 +173,9 @@ async function probeLastFramePtsMs(
       const ptsTime = frames[i]?.pts_time;
       if (ptsTime !== undefined) {
         const ms = secondsToMs(ptsTime);
-        if (ms >= 0) return clamp(ms, 0, Math.max(durationMs, ms));
+        // ms>=0 已保证非负；末帧 PTS 超出容器时长是常态（封装时长四舍五入），
+        // 不做假钳制（原 clamp(ms, 0, max(durationMs, ms)) 上界恒 ≥ ms，恒等式）。
+        if (ms >= 0) return ms;
       }
     }
   }
@@ -197,7 +202,14 @@ export async function probeVideo(videoPath: string, options: ProbeVideoOptions):
     );
     raw = JSON.parse(stdout as string) as FfprobeJson;
   } catch (error) {
-    if (error instanceof PfStreamError && error.code === 'PFSTREAM_SPAWN_FAILED') throw error;
+    // 取消不被改码：EXEC_ABORT 如实透传（此前被统一改成 PROBE_FAILED，
+    // 调用方无法区分「探测失败」与「调用方取消」）。
+    if (
+      error instanceof PfStreamError &&
+      (error.code === 'PFSTREAM_SPAWN_FAILED' || error.code === 'PFSTREAM_EXEC_ABORT')
+    ) {
+      throw error;
+    }
     throw new PfStreamError('PFSTREAM_PROBE_FAILED', (error as Error).message);
   }
 

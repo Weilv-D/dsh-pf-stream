@@ -178,18 +178,20 @@ export async function transcribeWindow(
 
     const chunks = planChunksFor(gaps, vad, options.settings.provider);
     const result = await runChunks(videoPath, chunks, options.settings.provider, options);
+    // 单次清洗双用：输出与缓存写回共用同一份 anchor+guard 结果
+    // （原实现对同一 outcome 双跑 anchor+guardSegments，幂等但纯浪费）。
+    const cleaned = result.outcomes
+      .sort((a, b) => a.anchorStartMs - b.anchorStartMs)
+      .map((outcome) => ({ outcome, guarded: guardSegments(anchor(outcome), vad) }));
     let segments: TranscriptSegment[] = [];
     let droppedByGuard = 0;
-    for (const outcome of result.outcomes.sort((a, b) => a.anchorStartMs - b.anchorStartMs)) {
-      const anchored = anchor(outcome);
-      const guarded = guardSegments(anchored, vad);
+    for (const { outcome, guarded } of cleaned) {
       droppedByGuard += guarded.dropped;
       segments = segments.concat(guarded.segments);
     }
     // 缓存记录锚定并清洗后的段（保证幂等）；segId 区间内先占位，
     // 全部区间合并完成后统一全局重编号再落盘与拼接
-    for (const outcome of result.outcomes.sort((a, b) => a.anchorStartMs - b.anchorStartMs)) {
-      const guarded = guardSegments(anchor(outcome), vad);
+    for (const { outcome, guarded } of cleaned) {
       if (guarded.segments.length > 0 || outcome.range[1] > outcome.range[0]) {
         intervals = mergeInterval(intervals, {
           startMs: outcome.range[0],
@@ -198,6 +200,17 @@ export async function transcribeWindow(
           segments: guarded.segments.map((s, i) => ({ ...s, segId: i + 1 })),
         });
       }
+    }
+    // 覆盖承诺：缺口按缝合范围尝试过转写即视为已覆盖——island 切块 provider
+    // （basic/host）的块只覆盖语音岛，岛间静音区若不记覆盖会每轮重复请求
+    // 静音区、永不收敛。段仍按块记录（重叠区间由 mergeInterval 合并）。
+    for (const range of gaps) {
+      intervals = mergeInterval(intervals, {
+        startMs: range[0],
+        endMs: range[1],
+        source: 'asr',
+        segments: [],
+      });
     }
     renumberSegmentsGlobally(intervals);
     await writeTranscriptCache(options.cacheDir, fingerprint, intervals).catch(() => undefined);

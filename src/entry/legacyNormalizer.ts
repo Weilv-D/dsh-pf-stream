@@ -93,7 +93,16 @@ export function normalizeLegacyArgs(
   if (has('fps')) {
     const fps = Number(args['fps']);
     if (Number.isFinite(fps) && fps > 0) {
-      intent.interval_ms = Math.round(1000 / fps);
+      const interval = Math.round(1000 / fps);
+      // fps ≥ 2500 取整为 0：若静默透传，adapter 只会报「interval_ms 必须为
+      // 正数」——模型明明传的是 fps，错误却指向未传过的字段，不可归因。
+      if (interval <= 0) {
+        throw new PfStreamError(
+          'PFSTREAM_ARGS_INTERVAL',
+          `fps=${fps} 间隔不足 1ms（超出可采样范围），请降低 fps 或改用 frame_count`,
+        );
+      }
+      intent.interval_ms = interval;
       intent.action = 'uniform';
       normalizedFrom.push('fps');
     }
@@ -101,7 +110,14 @@ export function normalizeLegacyArgs(
   if (has('interval')) {
     const iv = Number(args['interval']);
     if (Number.isFinite(iv) && iv > 0) {
-      intent.interval_ms = toMs(iv, durationMs);
+      const ms = toMs(iv, durationMs);
+      if (ms <= 0) {
+        throw new PfStreamError(
+          'PFSTREAM_ARGS_INTERVAL',
+          `interval=${iv} 归一化后不足 1ms，请提高间隔`,
+        );
+      }
+      intent.interval_ms = ms;
       intent.action = 'uniform';
       normalizedFrom.push('interval');
     }

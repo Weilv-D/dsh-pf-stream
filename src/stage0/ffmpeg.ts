@@ -51,6 +51,13 @@ export function execFile(file: string, args: string[], options: ExecOptions = {}
   const { timeoutMs, signal, encoding = 'utf8' } = options;
 
   return new Promise<ExecResult>((resolve, reject) => {
+    // 已中止的 signal 不再触发 abort 事件：不预检会让「调用前已取消」的
+    // execFile 照常跑完并正常返回（Node 内建 execFile 语义是先 reject
+    // AbortError）。预检一次性关闭整条确定性通道的取消语义缺口。
+    if (signal?.aborted) {
+      reject(new PfStreamError('PFSTREAM_EXEC_ABORT', `${file} 在调用前已被取消`));
+      return;
+    }
     let child;
     try {
       child = spawn(file, args, {

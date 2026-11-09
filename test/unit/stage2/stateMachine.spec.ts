@@ -69,11 +69,15 @@ describe('SWITCH 原子序列与静态观察', () => {
     expect(m.switchStaticSincePtsMs).toBe(100);
   });
 
-  it('SWITCH 后静止满 250ms → switch_static_emit', () => {
+  it('SWITCH 后静止满 250ms → switch_static_emit 且 pending 保留（发射方消费）', () => {
     const m = new SchmittMachine();
     m.step(0, 0.9, TH, 'SWITCH');
     const s = m.step(400, 0.01, TH, 'none'); // 300ms ≥ 250ms
     expect(s.effects).toContain('switch_static_emit');
+    // 规格案例9：黑场顺延时 pending 不能在观察窗到期被清除——发射/顺延捕获
+    // 完成后由采样器消费（consumeFSwitchPending），300ms 兜底分支保持武装。
+    expect(m.fSwitchPending).toBe(true);
+    expect(m.consumeFSwitchPending()).toBeUndefined();
     expect(m.fSwitchPending).toBe(false);
   });
 

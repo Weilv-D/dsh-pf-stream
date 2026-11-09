@@ -44,6 +44,10 @@ function clampRoi(roi: RoiHint): RoiHint {
   }
   const x = Math.min(Math.max(roi.x, 0), 1);
   const y = Math.min(Math.max(roi.y, 0), 1);
+  // x/y 钳到 1 后剩余宽度为 0：产出零宽 ROI（下游退化几何）不如明确拒绝。
+  if (x >= 1 || y >= 1) {
+    throw new PfStreamError('PFSTREAM_ARGS_ROI', `roi_hint 原点越界（x=${roi.x}, y=${roi.y}），视窗左上角必须 <1`);
+  }
   const w = Math.min(Math.max(roi.w, 1e-9), 1 - x);
   const h = Math.min(Math.max(roi.h, 1e-9), 1 - y);
   return { x, y, w, h };

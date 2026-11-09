@@ -119,7 +119,6 @@ export const Config = Schema.object({
 
 /** 流式单次调用阻塞上限：宿主死线减 40s 余量（超时协作式，signal 绝不硬终止）。 */
 export const TOOL_TIMEOUT_MS = 900_000;
-export const SELF_MANAGED_BLOCK_CEILING_MS = TOOL_TIMEOUT_MS - 40_000;
 
 /** 宿主 tools 服务；运行时由 inject=['tools'] 保证存在（类型未随 cordis 包发布）。 */
 export interface ToolsService {

@@ -204,6 +204,40 @@ export function compactEpoch(
   return false;
 }
 
+/**
+ * 清除预检字节水位截断的未投递增量包（从历史环与 FUnitCache 摘除）。
+ *
+ * 这些包的条带从未随增量投递（precheck 丢弃），保留在环中会让它们在下一轮
+ * 收敛时获得冷区资格、被收编为 anchor_only_ref——违反「先投递后收编」不变式
+ * （模型会收到指向从未见过条带的锚点引用，P 单元内容永久静默丢失）。摘除后
+ * 与 FORM_2/心跳类纯过程包的释放语义一致：未投递内容不留环。
+ *
+ * 返回实际摘除的包数（≤ ids.size；同轮重复 id 或已释放 id 自然跳过）。
+ */
+export function purgeUndeliveredPackets(
+  slot: SessionVideoState,
+  session: SessionState,
+  ids: ReadonlySet<number>,
+): number {
+  if (ids.size === 0) return 0;
+  const removed: HistoryEntry[] = [];
+  slot.history.packets = slot.history.packets.filter((e) => {
+    if (ids.has(e.packet.packetId)) {
+      removed.push(e);
+      return false;
+    }
+    return true;
+  });
+  for (const e of removed) {
+    if (e.packet.anchorFId != null) session.fUnitCache.delete(e.packet.anchorFId);
+  }
+  // pendingNew 计「上次收敛以来的新包数」；摘除的包不再计入收敛窗口。
+  if (removed.length > 0 && slot.epoch.pendingNew >= removed.length) {
+    slot.epoch.pendingNew -= removed.length;
+  }
+  return removed.length;
+}
+
 /** 热区引用：原条带字节原样重发，history_mode='full_strip_ref'。 */
 export function hotRefArtifact(entry: HistoryEntry): PacketArtifact {
   const packet: CanvasPacket = { ...entry.packet, historyMode: 'full_strip_ref' };

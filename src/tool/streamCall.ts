@@ -12,6 +12,7 @@ import {
   compactEpoch,
   HOT_WINDOW,
   planHistoryRefs,
+  purgeUndeliveredPackets,
   recordPackets,
 } from '../stage6/history.js';
 import {
@@ -20,8 +21,13 @@ import {
   type BundleKind,
   type PrecheckResult,
 } from '../stage6/precheck.js';
-import { baselinesFromIntent, mergeSessionIntent, sessionIntentChanged } from '../stage5/intent.js';
-import { fingerprintOf, getSessionState, getVideoSlot } from '../session/state.js';
+import { mergeSessionIntent, sessionIntentChanged } from '../stage5/intent.js';
+import { fingerprintOf, getSessionState, getVideoSlot, peekSessionState } from '../session/state.js';
+import {
+  exportSessionSnapshot,
+  importSessionSnapshot,
+  setMemorySession,
+} from '../session/state.js';
 import {
   ensureSessionPersistenceReady,
   persistSession,
@@ -85,7 +91,7 @@ export interface StreamCallResult extends Omit<StreamRunResult, 'telemetry'> {
   telemetry: StreamRunResult['telemetry'] & { precheck: PrecheckSummary };
   /** 冷区引用数（Epoch 固定复用）。 */
   coldRefCount: number;
-  /** 热区引用数。 */
+  /** 热区条带引用（含字节）数。 */
   hotRefCount: number;
   sessionIntentId: string;
   appliedIntentId: string;
@@ -98,6 +104,13 @@ export interface StreamCallResult extends Omit<StreamRunResult, 'telemetry'> {
    * 投递失败时不调用——本次推进不落盘，快照以最近一次成功投递为准。
    */
   commit: () => Promise<boolean>;
+  /**
+   * 投递失败回滚：把会话内存态恢复到本次调用前（快照往返），并跳过本次
+   * 落盘。「失败调用零状态副作用」——回滚后的下一调用从同一游标重新消费
+   * 该窗口（内容可恢复）。仅当期间无后续调用推进（mutationSeq 守卫）时
+   * 执行，否则跳过（避免抹掉后续调用状态）；返回是否实际回滚。
+   */
+  rollback: () => boolean;
 }
 
 /**
@@ -145,6 +158,13 @@ async function runStreamCallLocked(
   await ensureSessionPersistenceReady();
   restoreSessionIfAbsent(sessionId);
   const session = getSessionState(sessionId);
+  // 回滚点：在首次变更前固化整会话快照 + 变更序号。投递失败时 handler 调
+  // rollback() 把内存态恢复到此处——否则失败调用的推进滞留内存，会被下一次
+  // 成功调用的 commit 携带落盘，重启后未投递窗口被永久跳过（P2-1 跨调用
+  // 携带漏洞），且内存里该窗口内容同样永不交付。快照化成本为每次调用一次
+  // 整会话 JSON 序列化（≈1MB 量级，远小于解码耗时，可接受）。
+  const rollbackPayload = exportSessionSnapshot(session);
+  const rollbackMark = ++session.mutationSeq;
   const fingerprint = fingerprintOf(videoPath);
   const slot = getVideoSlot(session, fingerprint);
 
@@ -311,6 +331,27 @@ async function runStreamCallLocked(
     maxTokensPerImage: options.maxTokensPerImage,
   });
 
+  // 字节水位截断的未投递增量包：从历史环与 FUnitCache 摘除（「先投递后收编」
+  // 不变式——保留在环中会让这些包在下一轮收敛时被收编为 anchor_only_ref，
+  // 模型收到指向从未见过条带的锚点引用）。冷/热引用被截断不影响不变式
+  // （它们的条带已投递过）。同时给出可行动提示行（此前只有 telemetry 可见）。
+  const droppedNewIds = new Set(
+    precheck.dropped.filter((d) => d.kind === 'new').map((d) => d.packetId),
+  );
+  const purgedCount = purgeUndeliveredPackets(slot, session, droppedNewIds);
+  let truncationHint: string | null = null;
+  if (purgedCount > 0) {
+    const droppedArts = result.packets.filter((a) => droppedNewIds.has(a.packet.packetId));
+    const times = droppedArts.flatMap((a) => a.packet.units.map((u) => u.timestampMs));
+    const range =
+      times.length > 0
+        ? `（约 ${(Math.min(...times) / 1000).toFixed(1)}s–${(Math.max(...times) / 1000).toFixed(1)}s）`
+        : '';
+    truncationHint =
+      `字节水位截断：${purgedCount} 个增量包超限未投递并已从历史移除${range}；` +
+      '该区间内容不会以冷区引用补发，请用 pts_window 指定该区间分小窗重看。';
+  }
+
   // 输出顺序：冷区（旧→新）→ 热区（旧→新）→ 增量（时序）
   const keptPackets: PacketArtifact[] = precheck.kept.map((it) => it.artifact);
   const newIdSet = new Set(
@@ -344,6 +385,7 @@ async function runStreamCallLocked(
 
   // 单帧/零帧视频（末帧 PTS=0）：流式通道无可发包（单帧不足以组包），
   // 给可行动指引而非静默空结果。
+  if (truncationHint !== null) keptHintLines.push(truncationHint);
   if (
     result.telemetry.stopReason === 'end_of_stream' &&
     keptPackets.length === 0 &&
@@ -393,9 +435,26 @@ async function runStreamCallLocked(
 
   // 落盘改为「投递成功后提交」：本函数只产出结果与 commit 闭包，handler 在
   // 附件回传（savePacketImages 可抛）成功后才调用 commit——这样「失败路径
-  // 不落盘」对整次工具调用成立：附件失败时本次推进不落盘，重启后从上一
-  // 成功点续接（内存照常推进，磁盘以最近一次成功投递为准）。
+  // 不落盘」对整次工具调用成立。配合 rollback：附件回传失败时把内存推进也
+  // 一并撤回，重启续接点与内容交付完全对齐（磁盘与内存同以成功投递为准）。
   const commit = (): Promise<boolean> => persistSession(session);
+
+  let rollbackDone = false;
+  const rollback = (): boolean => {
+    if (rollbackDone) return false;
+    rollbackDone = true;
+    // 并发守卫：仅当期间无后续调用推进（同一 session 对象且 mutationSeq 未变）
+    // 才执行快照回滚；否则跳过——后续调用已在共享对象上推进，它的成功 commit
+    // 会写出含本次推进的完整一致快照（内容单调），跳过回滚避免抹掉其状态。
+    if (
+      peekSessionState(sessionId) !== session ||
+      session.mutationSeq !== rollbackMark
+    ) {
+      return false;
+    }
+    setMemorySession(importSessionSnapshot(rollbackPayload));
+    return true;
+  };
 
   return {
     ...result,
@@ -409,6 +468,7 @@ async function runStreamCallLocked(
     audio: audioContext,
     audioByPacket,
     commit,
+    rollback,
   };
 }
 
@@ -421,9 +481,4 @@ function summarizePrecheck(precheck: PrecheckResult): PrecheckSummary {
     encodedBytes: precheck.encodedBytes,
     tokens: precheck.tokens,
   };
-}
-
-/** 供 handler 输出遥测的基准参数（不触发解码）。 */
-export function describeBaselines(intent: IntentDirective): ReturnType<typeof baselinesFromIntent> {
-  return baselinesFromIntent(intent.mode ?? 'standard', intent.focus ?? 'balanced');
 }

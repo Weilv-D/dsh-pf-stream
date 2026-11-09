@@ -93,32 +93,49 @@ export interface ModelPreset {
   id: ModelPresetId;
   label: string;
   file: string;
-  /** 官方下载地址（Hugging Face）；镜像在下载器里按顺序尝试。 */
+  /**
+   * 官方下载路径（Hugging Face LFS）。钉扎到 whisper.cpp v1.7.6 对应 commit
+   * （`/resolve/<commit>/`，内容不可变）——`/resolve/main/` 跟随可变分支指针，
+   * 上游替换内容时下载物会静默漂移。
+   */
   path: string;
+  /** LFS 精确字节数：落位校验（≠ 即重下自愈）与下载前提示共用。 */
+  bytes: number;
+  /** LFS sha256：落位完整性校验。镜像源同样过此校验——供应链上不信任镜像。 */
+  sha256: string;
   /** 建议磁盘占用（字节，用于下载前提示）。 */
   approxBytes: number;
 }
+
+/** whisper.cpp v1.7.6 对应 commit（模型 LFS 路径钉扎锚点）。 */
+export const WHISPER_CPP_COMMIT = 'a8d002cfd879315632a579e73f0148d06959de36';
 
 export const MODEL_PRESETS: readonly ModelPreset[] = [
   {
     id: 'base-q5_1',
     label: '快速（base，约 60MB）',
     file: 'ggml-base-q5_1.bin',
-    path: 'ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin',
+    path: `ggerganov/whisper.cpp/resolve/${WHISPER_CPP_COMMIT}/ggml-base-q5_1.bin`,
+    bytes: 59707625,
+    sha256: '422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898',
     approxBytes: 60 * 1024 * 1024,
   },
   {
     id: 'small-q5_1',
     label: '推荐（small，约 190MB）',
     file: 'ggml-small-q5_1.bin',
-    path: 'ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin',
+    path: `ggerganov/whisper.cpp/resolve/${WHISPER_CPP_COMMIT}/ggml-small-q5_1.bin`,
+    bytes: 190085487,
+    sha256: 'ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb',
     approxBytes: 190 * 1024 * 1024,
   },
   {
     id: 'medium-q5_0',
     label: '更准（medium，约 540MB）',
     file: 'ggml-medium-q5_0.bin',
-    path: 'ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin',
+    path: `ggerganov/whisper.cpp/resolve/${WHISPER_CPP_COMMIT}/ggml-medium-q5_0.bin`,
+    bytes: 539212467,
+    sha256: '19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f',
     approxBytes: 540 * 1024 * 1024,
   },
 ];

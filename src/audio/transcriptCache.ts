@@ -113,8 +113,13 @@ export function cachedSegmentsFor(
 }
 
 /**
- * 缺口计算：窗口减去已覆盖区间（允许 1s 重叠缝合）。
- * 返回需要重新转写的子窗口列表。
+ * 缺口计算：窗口减去已覆盖区间，返回需转写的子窗口列表。
+ *
+ * 缝合语义（修正）：缓存区间不再外扩 margin 当「已覆盖」——原实现方向反了，
+ * 缺口起点被推迟到 `interval.endMs + margin`，重叠/回看窗口的接缝处最多
+ * ~2s 音频永不转写，merge 后缺口判定视为全覆盖、洞永久化。改为：真实缺口
+ * （>50ms）+ 新块向两侧已缓存区间各伸入 marginMs 转写（重叠缝合给 ASR 跨缝
+ * 上下文），重叠引入的重复段由 mergeInterval 按重叠去重兜住。
  */
 export function missingRanges(
   intervals: TranscriptInterval[],
@@ -127,17 +132,21 @@ export function missingRanges(
   const gaps: Array<[number, number]> = [];
   let cursor = window[0];
   for (const it of sorted) {
-    const start = it.startMs - marginMs;
-    const end = it.endMs + marginMs;
-    if (start > cursor) gaps.push([cursor, Math.min(start, window[1])]);
-    cursor = Math.max(cursor, end);
+    if (it.startMs > cursor) gaps.push([cursor, Math.min(it.startMs, window[1])]);
+    cursor = Math.max(cursor, it.endMs);
     if (cursor >= window[1]) break;
   }
   if (cursor < window[1]) gaps.push([cursor, window[1]]);
-  return gaps.filter(([a, b]) => b - a > 50);
+  // 真实缺口按宽度过滤后，向两侧缓存区间伸入 margin（缝合余量的正确方向）。
+  return gaps
+    .filter(([a, b]) => b - a > 50)
+    .map(([a, b]): [number, number] => [
+      Math.max(window[0], a - marginMs),
+      Math.min(window[1], b + marginMs),
+    ]);
 }
 
-/** 新区间并入缓存文档（相邻重叠合并，段去重按起点）。 */
+/** 新区间并入缓存文档（相邻重叠合并，段按起点与重叠双闸去重）。 */
 export function mergeInterval(
   intervals: TranscriptInterval[],
   addition: TranscriptInterval,
@@ -149,7 +158,18 @@ export function mergeInterval(
     if (last && it.startMs <= last.endMs + 100) {
       const seen = new Set(last.segments.map((s) => s.startMs));
       last.endMs = Math.max(last.endMs, it.endMs);
-      for (const seg of it.segments) if (!seen.has(seg.startMs)) last.segments.push(seg);
+      // 重叠缝合（missingRanges 新语义）引入的重复段：与既有段重叠 ≥ 短段
+      // 一半即视为同段（缓存版优先保留）；零长段跳过重叠判定（阈值对零长恒真）。
+      for (const seg of it.segments) {
+        const duplicate = last.segments.some((s) => {
+          const overlap = Math.min(s.endMs, seg.endMs) - Math.max(s.startMs, seg.startMs);
+          const minLen = Math.min(s.endMs - s.startMs, seg.endMs - seg.startMs);
+          return minLen > 0 && overlap >= minLen * 0.5;
+        });
+        if (seen.has(seg.startMs) || duplicate) continue;
+        seen.add(seg.startMs);
+        last.segments.push(seg);
+      }
       last.segments.sort((a, b) => a.startMs - b.startMs);
     } else {
       out.push({ ...it, segments: [...it.segments] });

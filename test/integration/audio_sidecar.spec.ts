@@ -176,17 +176,28 @@ describe('A8 软截止先行返回 + 后台补缓存', () => {
       { timeout: 20_000, interval: 200 },
     );
 
-    const callsBefore = fn.mock.calls.length;
     const second = await runAudioSidecar(
       { videoPath: video, probe, ffmpegPath: 'ffmpeg', settings: cfg },
       [0, 3000],
       Date.now() + 8000,
     );
     expect(second.context.status).toBe('ok');
-    expect(second.context.telemetry.requests).toBe(0);
+    // 0.4.4 缺口语义修正：后台按 VAD 岛切块落缓存，岛间静音区是真实缺口——
+    // 第二次调用如实补转（旧语义 margin 外扩把缺口掩盖成假命中、永久成洞）。
+    expect(second.context.telemetry.requests).toBeLessThanOrEqual(2);
     expect(second.context.telemetry.cacheHit).toBe(true);
     expect(second.segments.map((s) => s.text)).toContain('后台补齐的台词');
-    expect(fn.mock.calls.length).toBe(callsBefore);
+    // 第三次调用：缺口已补齐（缝合合并后全覆盖），零请求全命中
+    const callsBeforeThird = fn.mock.calls.length;
+    const third = await runAudioSidecar(
+      { videoPath: video, probe, ffmpegPath: 'ffmpeg', settings: cfg },
+      [0, 3000],
+      Date.now() + 8000,
+    );
+    expect(third.context.status).toBe('ok');
+    expect(third.context.telemetry.requests).toBe(0);
+    expect(third.context.telemetry.cacheHit).toBe(true);
+    expect(fn.mock.calls.length).toBe(callsBeforeThird);
   }, 60_000);
 });
 

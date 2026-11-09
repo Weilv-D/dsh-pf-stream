@@ -3,7 +3,7 @@
  *
  * - seek_points（定点寻址）：目标 PTS 排序去重后逐点 `ffmpeg -ss <pts> -i <file> -frames:v 1`
  *   关键帧跳跃 + 精解码，全分辨率（保障 OCR 级细节）；
- * - 批量退化：目标数 ≥32 且平均间隔 ≤2s 时，排序后单遍区间解码摊薄寻址开销；
+ * - 批量退化：块内目标数打满 CHUNK_TARGETS(20) 且平均间隔 ≤2s 时，排序后单遍区间解码摊薄寻址开销；
  * - 空帧回退：解码端空输出时回退复用最后一个有效解码帧（契约 3）；
  * - 解码输出天然处于显示坐标系（ffmpeg 默认 autorotate）。
  *
@@ -29,12 +29,23 @@ export interface DecodePointOptions {
 
 export type DecodePointFn = typeof decodePoint;
 
+/**
+ * 时间毫秒 → ffmpeg seek 秒串。**向下取整**：精确 seek 丢弃 pts < 目标的帧，
+ * 目标必须 ≤ 窗口起点帧的 PTS，否则起点帧被丢弃、解码流相对 PTS 索引整体
+ * 前移一帧（续流路径系统性错位 ~1 帧）。定点通道目标恒为整数毫秒，floor
+ * 与原值相同；流式通道窗口起点是浮点标签（30fps 网格 19966.667ms），floor
+ * 保证目标不越过起点帧（实测 floor 保留该帧，toFixed 四舍五入会丢弃）。
+ */
+export function seekSeconds(ms: number): string {
+  return (Math.floor(ms) / 1000).toFixed(3);
+}
+
 /** 单点定点解码 argv（纯函数，供单测直接覆盖流选择）。 */
 export function pointArgv(videoPath: string, ptsMs: number, videoOrdinal: number): string[] {
   return [
     '-hide_banner',
     '-loglevel', 'error',
-    '-ss', (ptsMs / 1000).toFixed(3),
+    '-ss', seekSeconds(ptsMs),
     '-i', videoPath,
     // 流选择显式化：ffprobe 索引按 v:N 取帧，而 ffmpeg 缺省选流按分辨率优先——
     // 封面流分辨率高于主视频或多真实视频流文件时两者会分歧，PTS/几何随之错乱。
@@ -57,6 +68,9 @@ export async function decodePoint(
   const { stdout } = await execFile(options.ffmpegPath, argv, {
     signal: options.signal,
     encoding: 'buffer',
+    // 与探针同口径：坏文件/网络盘上 ffmpeg 挂死不再无限等（此前为全仓唯二
+    // 无 timeoutMs 的调用点之一，timestamps 通道无墙上时钟界）。
+    timeoutMs: 60_000,
   });
   const frameBytes = options.displayWidth * options.displayHeight * 3;
   // 截断帧（0 < 长度 < frameBytes）按空帧处理，交由回退链兜底。
@@ -78,7 +92,13 @@ export async function probePtsIndex(
   videoOrdinal = 0,
   signal?: AbortSignal | undefined,
 ): Promise<PtsIndexEntry[]> {
-  const interval = `${(window0Ms / 1000).toFixed(3)}%${(window1Ms / 1000).toFixed(3)}`;
+  // 查询终点外扩 250ms：read_intervals 的 END 截断受 B 帧重排深度影响——
+  // nominal END 之后仍需喂入后续 packet 才能吐出窗口末端的帧（实测 30fps
+  // fixture 上 end=+1ms 只出 29/31 帧，滞后 1~3 帧不定）。integer-ms 帧率下
+  // w1==末帧 PTS 时末帧会被排除出索引（realigned 通道钳制标签被步长门丢弃
+  // → 末帧内容永不消费）。外扩后索引包含 pts==w1 的末帧；上界过滤（+0.5ms
+  // 容差）继续剔除窗口外帧，多读的帧只增加读取成本不改变语义。
+  const interval = `${seekSeconds(window0Ms)}%${((window1Ms + 250) / 1000).toFixed(3)}`;
   const argv = [
     '-v', 'error',
     '-select_streams', `v:${videoOrdinal}`,
@@ -87,15 +107,18 @@ export async function probePtsIndex(
     '-of', 'json',
     videoPath,
   ];
-  const { stdout } = await execFile(ffprobePath, argv, { signal, encoding: 'utf8' });
-  const parsed = JSON.parse(stdout) as { frames?: Array<{ pts_time?: string }> };
+  // 与 probe.ts 元数据探针同口径的 60s 超时：坏文件/网络盘挂死不再无限等
+  // （decodePoint 同批修复，全仓 execFile 调用点不再有无限时缺省）。
+  const { stdout } = await execFile(ffprobePath, argv, { signal, encoding: 'utf8', timeoutMs: 60_000 });
+  const parsed = JSON.parse(stdout as string) as { frames?: Array<{ pts_time?: string }> };
   const entries: PtsIndexEntry[] = [];
   for (const f of parsed.frames ?? []) {
     const t = f.pts_time;
     if (t == null) continue;
     const ms = Number.parseFloat(t) * 1000;
+    if (!Number.isFinite(ms)) continue;
     // read_intervals 起点为关键帧回卷（pre-roll）：丢弃窗口外条目，
-    // 保证与 ffmpeg 精确 -ss 的首帧对齐（VFR 安全，亚毫秒精度）。
+    // 保证与 ffmpeg 精确 -ss 的首帧配对（VFR 安全，亚毫秒精度）。
     if (ms < window0Ms - 0.5 || ms > window1Ms + 0.5) continue;
     entries.push({ frameIndex: entries.length, ptsMs: ms });
   }
@@ -153,7 +176,7 @@ export function rangeArgv(
   return [
     '-hide_banner',
     '-loglevel', 'error',
-    '-ss', (window0Ms / 1000).toFixed(3),
+    '-ss', seekSeconds(window0Ms),
     '-i', videoPath,
     // 流选择显式化：ffprobe 索引按 v:N 取帧，而 ffmpeg 缺省选流按分辨率优先——
     // 封面流分辨率高于主视频或多真实视频流文件时两者会分歧，PTS/几何随之错乱。

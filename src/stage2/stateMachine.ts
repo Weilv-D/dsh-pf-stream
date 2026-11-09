@@ -79,6 +79,15 @@ export class SchmittMachine {
   }
 
   /**
+   * 采样器消费 F_switch pending（switch_static_emit 发射或顺延捕获完成后
+   * 调用）。pending 的清除集中于此，保持「先投递后清位」不变式：pending
+   * 存续期间，300ms 兜底捕获分支保持武装。
+   */
+  consumeFSwitchPending(): void {
+    this.fSwitchPending = false;
+  }
+
+  /**
    * 单帧步进。switchVerdict 由 SwitchDetector 先行判定；
    * settleArena 由流式引擎维护（观察窗内 g 最高帧），settle_lock 时取用。
    */
@@ -113,13 +122,13 @@ export class SchmittMachine {
               effects.push('switch_motion_void');
             }
             this.toMotion(ptsMs, effects);
-          } else if (ptsMs - this.switchStaticSincePtsMs >= th.switchStaticMs) {
-            this.switchStaticSincePtsMs = null;
-            if (this.fSwitchPending) {
-              this.fSwitchPending = false;
-              effects.push('switch_static_emit');
-            }
-          }
+        } else if (ptsMs - this.switchStaticSincePtsMs >= th.switchStaticMs) {
+          this.switchStaticSincePtsMs = null;
+          // 观察窗到期：无条件发出发射请求，pending 保留（发射决策需要
+          // fSwitchImage 状态——采样器侧才知道，规格《三》case9：黑场顺延
+          // 到非黑帧或 300ms 兜底帧后发射，pending 由发射/顺延捕获方消费）。
+          effects.push('switch_static_emit');
+        }
           // 合并窗在 SWITCH 场景不存在
           if (this.mergeStartPtsMs !== null) this.mergeStartPtsMs = null;
           return { state: this.state, effects };

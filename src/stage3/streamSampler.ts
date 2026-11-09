@@ -184,7 +184,10 @@ export async function runStreamPass(
 
   // 流耗尽门：常规视频 w0 达到末帧 PTS 即流末；单帧视频（lastPtsMs=0）首访
   // 放行一次解码（w0 恒为 0，仅当游标已推进越过 0 才算已消费）。
-  if (w0 >= probe.lastPtsMs && (probe.lastPtsMs > 0 || cursor.lastConsumedPtsMs > 0)) {
+  // 0.5ms 容差：lastPtsMs 是 Math.round 整数、cursor 是 float 标签（30fps
+  // 末帧 19966.667 vs 整数 19967 差 <0.5ms），严格比较永不闩锁 → 每次续调
+  // 重复 spawn ffprobe+ffmpeg 白跑尾窗、整数毫秒帧率下退化为持续空跑。
+  if (w0 >= probe.lastPtsMs - 0.5 && (probe.lastPtsMs > 0 || cursor.lastConsumedPtsMs > 0)) {
     return {
       packets,
       hintLines,
@@ -205,6 +208,8 @@ export async function runStreamPass(
   let ptsRealign = 0;
   let stopReason: StreamTelemetry['stopReason'] = 'end_of_window';
   let lastPtsOfWindow: number | null = null;
+  /** budget_* 停止帧的消费标记源（该帧已步进、效果已部分应用）。 */
+  let lastArrivedStepPtsMs: number | null = null;
   const ffmpegSpawns: string[][] = [];
   let arenaMaxHeld = 0;
   let audioAssistFires = 0;
@@ -382,6 +387,8 @@ export async function runStreamPass(
         // 等效 30fps 步长门（契约 5）：ΔPTS ≥ 33.3ms 才进入感知
         if (rt.lastStepPtsMs !== null && ptsMs - rt.lastStepPtsMs < STEP_MS) return;
         framesStepped++;
+        // budget_* 停止帧的消费标记源（catch 中标记 lastPtsOfWindow 用）。
+        lastArrivedStepPtsMs = ptsMs;
         const t0 = performance.now();
         const gray = toGray64x36(frame.width, frame.height, frame.data);
         const signal = perceiveFrame(perception, ptsMs, gray, weights, ctrl.live.HHighEff);
@@ -460,7 +467,12 @@ export async function runStreamPass(
               emit('SETTLE');
               break;
             case 'switch_static_emit':
-              if (rt.fSwitchImage) emit('SWITCH_STATIC');
+              if (rt.fSwitchImage) {
+                emit('SWITCH_STATIC');
+                rt.machine.consumeFSwitchPending();
+              }
+              // F_switch 未捕获（黑场/过曝顺延中）：保留 pending 与兜底死线，
+              // 由下方顺延捕获分支（非黑帧或 300ms 兜底）补获后发射。
               break;
             case 'switch_motion_void':
               rt.fSwitchImage = null;
@@ -478,6 +490,11 @@ export async function runStreamPass(
         if (rt.machine.state === 'MOTION') {
           rt.machine.integratorA += ctrl.alphaFor(signal.alpha) * signal.d * stepScale;
           while (rt.machine.integratorA >= ctrl.live.SEff) {
+            // 残差钳制（有意设计，勿改「真积分」）：d 随 Δt 线性缩放，stepScale
+            // 的 ΔPTS/33.3 补偿在 d 线性域是二次加权——真积分语义会破坏
+            // 用例6「24/60fps 同速运动 P 数一致（±1）」的规范契约（实测 86 vs
+            // 28）。单捕获钳制是 fps 等效性的实现载体；大位移单帧欠采样是
+            // 已知取舍（0.4.4 审计复核推翻其 OOM 主张：循环恒单次迭代）。
             rt.machine.integratorA = Math.min(
               rt.machine.integratorA - ctrl.live.SEff,
               ctrl.live.SEff - 1e-4,
@@ -530,14 +547,21 @@ export async function runStreamPass(
         ) {
           rt.fSwitchImage = capture(frame, ptsMs, 'F', signal.dLocal, signal.topK);
           rt.fSwitchWaitDeadline = null;
+          // 顺延捕获完成即发射（规格《三》case9：黑场后首个正常曝光帧）；
+          // pending 同步消费，避免跨窗口残留。
+          emit('SWITCH_STATIC');
+          rt.machine.consumeFSwitchPending();
         } else if (
           rt.machine.fSwitchPending &&
           !rt.fSwitchImage &&
           rt.fSwitchWaitDeadline !== null &&
           ptsMs > rt.fSwitchWaitDeadline
         ) {
-          rt.fSwitchImage = capture(frame, ptsMs, 'F', signal.dLocal, signal.topK); // 300ms 兜底
+          // 300ms 兜底：即使帧仍为黑场也捕获发射（规格允许纯黑兜底帧）。
+          rt.fSwitchImage = capture(frame, ptsMs, 'F', signal.dLocal, signal.topK);
           rt.fSwitchWaitDeadline = null;
+          emit('SWITCH_STATIC');
+          rt.machine.consumeFSwitchPending();
         }
 
         // ---- 长静止心跳（5s PTS，独立编号空间）----
@@ -584,13 +608,23 @@ export async function runStreamPass(
   } catch (error) {
     if (error instanceof StopIteration) {
       stopReason = error.reason;
+      // budget_* 停止发生在帧效果处理中（积分已部分应用、捕获已入队）：
+      // 不标记消费会让该帧在下一窗口以全新感知上下文重放（prevGray=null →
+      // d=0 伪 settle 迁移；PEAK 路径则积分双计+捕获重复入队）。标记为已
+      // 消费，残余运动能量留在积分器/待发队列中随下一窗口续接。
+      // wall_clock 在步进前抛出，帧未消费，保持可重放。
+      if (error.reason !== 'wall_clock' && lastArrivedStepPtsMs !== null) {
+        lastPtsOfWindow = lastArrivedStepPtsMs;
+      }
     } else {
       throw error;
     }
   }
 
   // 窗口末端已钳制到流末帧（lastPtsMs）且无预算提前停止 → 流已耗尽。
-  if (stopReason === 'end_of_window' && w1 >= probe.lastPtsMs) {
+  // 与耗尽门同口径的 0.5ms 容差：浮点 w1 vs 整数 lastPtsMs 差 <0.5ms 时
+  // 不严格比较会让「跑完整窗」伪装成 end_of_window（下一轮白跑）。
+  if (stopReason === 'end_of_window' && w1 >= probe.lastPtsMs - 0.5) {
     stopReason = 'end_of_stream';
   }
 
@@ -650,7 +684,10 @@ function restoreRuntime(cursor: StreamCursor): RuntimeState {
       warmupLeft: s.clarityWarmupLeft ?? s.emaWarmupLeft,
       rhoHistory: s.rhoHistory ?? [],
     },
-    lastStepPtsMs: cursor.lastConsumedPtsMs,
+    // 首访语义：cursor=0 时「上一步进 PTS」必须为 null 而非 0——0 是合法 PTS，
+    // 用 0 当哨兵会让首个窗口的第一帧（pts=0）被步长门当成重复帧吞掉
+    // （所有视频的第一帧从未被感知，单帧视频则完全无帧可看）。
+    lastStepPtsMs: cursor.lastConsumedPtsMs > 0 ? cursor.lastConsumedPtsMs : null,
     pendingP: (cursor.pendingPUnits ?? []).map((p) => ({
       ptsMs: p.ptsMs,
       image: { width: 336, height: 336, data: p.image336 },
@@ -662,7 +699,9 @@ function restoreRuntime(cursor: StreamCursor): RuntimeState {
     motionArena: null,
     settleArena: null,
     pendingF: null,
-    fSwitchWaitDeadline: null,
+    // F_switch 顺延捕获兜底死线：跨窗口持久化——pending 与死线必须同存续，
+    // 否则恢复后 pending=true 而分支要求 deadline!=null，顺延捕获永久哑火。
+    fSwitchWaitDeadline: s.fSwitchWaitDeadlinePtsMs ?? null,
     fSwitchImage: null,
     motionEnteredAtPtsMs: s.motionEnteredAtPtsMs ?? null,
     lastFEmittedPtsMs: cursor.lastEmittedPacketPtsMs,
@@ -684,6 +723,8 @@ function buildCursor(rt: RuntimeState, cursor: StreamCursor, lastPts: number, ct
     motionEnteredAtPtsMs: rt.motionEnteredAtPtsMs,
     lastHeartbeatPtsMs: rt.lastHeartbeatPtsMs,
     sumDtSinceFMs: rt.sumDtSinceF,
+    // F_switch 顺延兜底死线跨窗口续接（与 fSwitchPending 同存续）
+    fSwitchWaitDeadlinePtsMs: rt.fSwitchWaitDeadline,
     ctrl: ctrl.snapshot(),
   };
   const pendingPUnits: PendingPUnit[] = rt.pendingP.map((p) => ({

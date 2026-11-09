@@ -98,22 +98,35 @@ describe('A9 转写缓存', () => {
     expect(await readTranscriptCache(dir, fp)).toBeNull();
   });
 
-  it('missingRanges：部分覆盖只补缺口（±1s 缝合余量）', () => {
+  it('missingRanges：真实缺口 + 两侧缝合外扩（修正后语义）', () => {
     const its = [interval(0, 2000, [])];
-    expect(missingRanges(its, [0, 8000])).toEqual([[3000, 8000]]);
-    expect(missingRanges(its, [0, 2500])).toEqual([]);
-    // 中段缺口
+    // 真实缺口 [2000, 8000] → 缝合外扩 [1000, 8000]（左伸入缓存 1s 提供跨缝上下文）
+    expect(missingRanges(its, [0, 8000])).toEqual([[1000, 8000]]);
+    // 尾部 500ms 真实缺口不再被 margin 外扩掩盖（原实现方向反了会把
+    // [2000,2500] 判为已覆盖 → 永久成洞）
+    expect(missingRanges(its, [0, 2500])).toEqual([[1000, 2500]]);
+    // 中段缺口：真实缺口 [2000,6000] → [1000, 7000]（两侧缝合）
     const its2 = [interval(0, 2000, []), interval(6000, 8000, [])];
-    expect(missingRanges(its2, [0, 8000])).toEqual([[3000, 5000]]);
+    expect(missingRanges(its2, [0, 8000])).toEqual([[1000, 7000]]);
   });
 
-  it('mergeInterval：重叠合并、段按起点去重', () => {
+  it('mergeInterval：重叠合并、段按起点与重叠双闸去重', () => {
     const a = interval(0, 2000, [seg(1, 100, '甲'), seg(2, 1200, '乙')]);
     const b = interval(1800, 4000, [seg(3, 1200, '乙'), seg(4, 2500, '丙')]);
     const merged = mergeInterval([a], b);
     expect(merged).toHaveLength(1);
     expect(merged[0]).toMatchObject({ startMs: 0, endMs: 4000 });
     expect(merged[0]!.segments.map((s) => s.text)).toEqual(['甲', '乙', '丙']);
+  });
+
+  it('mergeInterval：缝合重叠引入的抖动重复段（起点不同）按重叠去重', () => {
+    // 同一句话被缓存段与缝合新块各转写一次，起点抖动 ±50ms：
+    // 起点精确去重挡不住，重叠 ≥ 短段一半时去重（缓存版优先保留）。
+    const a = interval(0, 3000, [seg(1, 1000, '甲')]);
+    const b = interval(2500, 5000, [seg(1, 1050, '甲抖动'), seg(2, 3500, '乙')]);
+    const merged = mergeInterval([a], b);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]!.segments.map((s) => s.text)).toEqual(['甲', '乙']);
   });
 
   it('cachedSegmentsFor：窗口相交段按时间序', () => {

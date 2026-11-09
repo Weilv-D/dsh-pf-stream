@@ -73,24 +73,50 @@ export function transcriptionUrl(baseUrl: string): string {
   return /\/v1$/i.test(base) ? `${base}/audio/transcriptions` : `${base}/v1/audio/transcriptions`;
 }
 
+/**
+ * 超时与取消武装到「整个请求生命周期」（含响应体读取）：
+ * 原实现 headers 一到就清 timer，慢速/劣化服务端拖拽 body 时该 worker 永挂
+ * （Promise.all 永不返回，只靠 sidecar 软截止兜底）。现在 timer 在 dispose()
+ * 时才解除——body 拖拽同样受超时约束。
+ *
+ * @returns response 与 dispose（body 消费完成后必须调用以清 timer）。
+ */
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   timeoutMs: number,
   signal: AbortSignal | undefined,
-): Promise<Response> {
+): Promise<{ response: Response; dispose: () => void; timedOut: () => boolean }> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new Error(`ASR 请求超过 ${timeoutMs}ms`)), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new Error(`ASR 请求超过 ${timeoutMs}ms`));
+  }, timeoutMs);
   const onAbort = () => controller.abort(signal?.reason);
   signal?.addEventListener('abort', onAbort, { once: true });
   // 进入时已中止的 signal 不会再触发 abort 事件，显式触发一次
   if (signal?.aborted) onAbort();
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    return {
+      response,
+      dispose: () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+      },
+      timedOut: () => timedOut,
+    };
+  } catch (error) {
     clearTimeout(timer);
     signal?.removeEventListener('abort', onAbort);
+    throw error;
   }
+}
+
+/** 错误路径响应体处理：cancel 释放连接（undici 的 body 未消费时连接滞留至 GC）。 */
+async function discardBody(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined);
 }
 
 function buildForm(input: AsrChunkInput, settings: AsrSettings, responseFormat: string): FormData {
@@ -113,47 +139,62 @@ export async function transcribeVerbose(
   if (!settings.baseUrl || !settings.apiKey) {
     throw new AsrRequestError('openai_verbose 需要 baseUrl 与 apiKey', 'ASR_NOT_CONFIGURED');
   }
-  let response: Response;
-  try {
-    response = await fetchWithTimeout(
-      transcriptionUrl(settings.baseUrl),
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${settings.apiKey}` },
-        body: buildForm(input, settings, 'verbose_json'),
-      },
-      settings.timeoutMs,
-      signal,
-    );
-  } catch (error) {
+  const { response, dispose, timedOut } = await fetchWithTimeout(
+    transcriptionUrl(settings.baseUrl),
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${settings.apiKey}` },
+      body: buildForm(input, settings, 'verbose_json'),
+    },
+    settings.timeoutMs,
+    signal,
+  ).catch((error: unknown) => {
+    if (signal?.aborted) {
+      throw new AsrRequestError('ASR 请求已取消', 'ASR_ABORTED');
+    }
     throw new AsrRequestError(`ASR 网络请求失败：${(error as Error).message}`, 'ASR_NETWORK');
+  });
+  try {
+    if (response.status === 400) {
+      await discardBody(response);
+      // 兼容端不支持 verbose_json：退 json（调用方按整块文本处理）
+      throw new AsrRequestError('服务端拒绝 verbose_json', 'ASR_VERBOSE_REJECTED');
+    }
+    if (!response.ok) {
+      await discardBody(response);
+      throw new AsrRequestError(`ASR HTTP ${response.status}`, `ASR_HTTP_${response.status}`);
+    }
+    const doc = (await response.json().catch(() => {
+      // timer 武装到 body 读取：中止可能是超时（body 拖拽）或调用方取消，
+      // 归因分流（原先一律 BAD_RESPONSE，诊断失真）。
+      if (timedOut()) {
+        throw new AsrRequestError(`ASR 请求超过 ${settings.timeoutMs}ms（响应体读取超时）`, 'ASR_NETWORK');
+      }
+      if (signal?.aborted) {
+        throw new AsrRequestError('ASR 请求已取消', 'ASR_ABORTED');
+      }
+      // 非法 JSON 若任其抛 SyntaxError 会绕过 AsrRequestError 契约，
+      // 被路由层 catch{failed++} 吞成无诊断的静默块失败。
+      throw new AsrRequestError('ASR 响应不是合法 JSON', 'ASR_BAD_RESPONSE');
+    })) as VerboseJson;
+    const segments = (doc.segments ?? [])
+      .filter((s) => typeof s.start === 'number' && typeof s.end === 'number' && (s.text ?? '').trim().length > 0)
+      .map((s) => ({
+        startMs: Math.round(s.start! * 1000),
+        endMs: Math.round(s.end! * 1000),
+        text: s.text!.trim(),
+        noSpeechProb: s.no_speech_prob,
+        avgLogprob: s.avg_logprob,
+        compressionRatio: s.compression_ratio,
+      }));
+    if (segments.length === 0 && (doc.text ?? '').trim().length > 0) {
+      return [{ startMs: 0, endMs: input.endMs - input.startMs, text: doc.text!.trim() }];
+    }
+    return segments;
+  } finally {
+    // body 消费完成后解除超时武装（timer 覆盖到响应体读取全程）。
+    dispose();
   }
-  if (response.status === 400) {
-    // 兼容端不支持 verbose_json：退 json（调用方按整块文本处理）
-    throw new AsrRequestError('服务端拒绝 verbose_json', 'ASR_VERBOSE_REJECTED');
-  }
-  if (!response.ok) {
-    throw new AsrRequestError(`ASR HTTP ${response.status}`, `ASR_HTTP_${response.status}`);
-  }
-  const doc = (await response.json().catch(() => {
-    // 非法 JSON 若任其抛 SyntaxError 会绕过 AsrRequestError 契约，
-    // 被路由层 catch{failed++} 吞成无诊断的静默块失败。
-    throw new AsrRequestError('ASR 响应不是合法 JSON', 'ASR_BAD_RESPONSE');
-  })) as VerboseJson;
-  const segments = (doc.segments ?? [])
-    .filter((s) => typeof s.start === 'number' && typeof s.end === 'number' && (s.text ?? '').trim().length > 0)
-    .map((s) => ({
-      startMs: Math.round(s.start! * 1000),
-      endMs: Math.round(s.end! * 1000),
-      text: s.text!.trim(),
-      noSpeechProb: s.no_speech_prob,
-      avgLogprob: s.avg_logprob,
-      compressionRatio: s.compression_ratio,
-    }));
-  if (segments.length === 0 && (doc.text ?? '').trim().length > 0) {
-    return [{ startMs: 0, endMs: input.endMs - input.startMs, text: doc.text!.trim() }];
-  }
-  return segments;
 }
 
 /** openai_basic：整块文本（时间戳 = 块区间）。 */
@@ -165,30 +206,41 @@ export async function transcribeBasic(
   if (!settings.baseUrl || !settings.apiKey) {
     throw new AsrRequestError('openai_basic 需要 baseUrl 与 apiKey', 'ASR_NOT_CONFIGURED');
   }
-  let response: Response;
-  try {
-    response = await fetchWithTimeout(
-      transcriptionUrl(settings.baseUrl),
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${settings.apiKey}` },
-        body: buildForm(input, settings, 'json'),
-      },
-      settings.timeoutMs,
-      signal,
-    );
-  } catch (error) {
+  const { response, dispose, timedOut } = await fetchWithTimeout(
+    transcriptionUrl(settings.baseUrl),
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${settings.apiKey}` },
+      body: buildForm(input, settings, 'json'),
+    },
+    settings.timeoutMs,
+    signal,
+  ).catch((error: unknown) => {
+    if (signal?.aborted) {
+      throw new AsrRequestError('ASR 请求已取消', 'ASR_ABORTED');
+    }
     throw new AsrRequestError(`ASR 网络请求失败：${(error as Error).message}`, 'ASR_NETWORK');
+  });
+  try {
+    if (!response.ok) {
+      await discardBody(response);
+      throw new AsrRequestError(`ASR HTTP ${response.status}`, `ASR_HTTP_${response.status}`);
+    }
+    const doc = (await response.json().catch(() => {
+      if (timedOut()) {
+        throw new AsrRequestError(`ASR 请求超过 ${settings.timeoutMs}ms（响应体读取超时）`, 'ASR_NETWORK');
+      }
+      if (signal?.aborted) {
+        throw new AsrRequestError('ASR 请求已取消', 'ASR_ABORTED');
+      }
+      throw new AsrRequestError('ASR 响应不是合法 JSON', 'ASR_BAD_RESPONSE');
+    })) as { text?: string };
+    const text = (doc.text ?? '').trim();
+    if (!text) return [];
+    return [{ startMs: 0, endMs: input.endMs - input.startMs, text }];
+  } finally {
+    dispose();
   }
-  if (!response.ok) {
-    throw new AsrRequestError(`ASR HTTP ${response.status}`, `ASR_HTTP_${response.status}`);
-  }
-  const doc = (await response.json().catch(() => {
-    throw new AsrRequestError('ASR 响应不是合法 JSON', 'ASR_BAD_RESPONSE');
-  })) as { text?: string };
-  const text = (doc.text ?? '').trim();
-  if (!text) return [];
-  return [{ startMs: 0, endMs: input.endMs - input.startMs, text }];
 }
 
 /**

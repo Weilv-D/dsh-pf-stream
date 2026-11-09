@@ -258,6 +258,8 @@ export interface StateMachineSnapshot {
   mergeStartPtsMs?: number | null;
   switchStaticSincePtsMs?: number | null;
   fSwitchPending?: boolean;
+  /** F_switch 黑场/过曝顺延捕获的兜底死线（采样器运行时态，跨窗口续接）。 */
+  fSwitchWaitDeadlinePtsMs?: number | null;
   clarityWarmupLeft?: number;
   rhoHistory?: number[];
   motionEnteredAtPtsMs?: number | null;
@@ -333,6 +335,12 @@ export interface SessionState {
   packetSeq: number;
   intentSeq: number;
   heartbeatSeq: number;
+  /**
+   * 进程内变更序号（每次流式调用锁内 +1；不进快照，重建置 0）。
+   * 投递失败回滚的并发守卫：回滚仅当序号未变（期间无后续调用推进）时执行，
+   * 否则跳过以避免抹掉后续调用已推进的状态。
+   */
+  mutationSeq: number;
 }
 
 // ---------------------------------------------------------------------------

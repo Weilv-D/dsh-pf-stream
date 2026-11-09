@@ -64,17 +64,19 @@ export function bilinearResize(src: RgbImage, dw: number, dh: number): RgbImage 
   for (let v = 0; v < dh; v++) {
     // float64 精确域内计算（(2v+1)*stepY ≤ 2^53）：>>1 的 ToInt32 截断在
     // 源高 ≳16K 时会产生垃圾坐标（确定性画面污染），改用除法语义等价。
+    // y0/wy 同理去位运算——cy ≳ 2^31（源边 ≳32.8K px）时 >>16/<<16 的
+    // ToInt32 把整数坐标截断为负，输出黑条。
     const fy = Math.floor(((2 * v + 1) * stepY) / 2); // (v+0.5)*stepY，定点
     const cy = Math.min(Math.max(fy - (FX >> 1), 0), maxSY);
-    const y0 = cy >> 16;
+    const y0 = Math.floor(cy / 65536);
     const y1 = Math.min(y0 + 1, src.height - 1);
-    const wy = (cy - (y0 << 16)) >> 8; // 0..256
+    const wy = Math.floor((cy - y0 * 65536) / 256); // 0..256
     for (let u = 0; u < dw; u++) {
       const fx = Math.floor(((2 * u + 1) * stepX) / 2);
       const cx = Math.min(Math.max(fx - (FX >> 1), 0), maxSX);
-      const x0 = cx >> 16;
+      const x0 = Math.floor(cx / 65536);
       const x1 = Math.min(x0 + 1, src.width - 1);
-      const wx = (cx - (x0 << 16)) >> 8; // 0..256
+      const wx = Math.floor((cx - x0 * 65536) / 256); // 0..256
       const i00 = (y0 * src.width + x0) * 3;
       const i10 = (y0 * src.width + x1) * 3;
       const i01 = (y1 * src.width + x0) * 3;

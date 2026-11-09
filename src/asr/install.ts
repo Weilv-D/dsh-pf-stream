@@ -8,7 +8,9 @@
  */
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
+  createReadStream,
   createWriteStream,
   existsSync,
   mkdirSync,
@@ -70,6 +72,17 @@ function fileSize(path: string): number {
   } catch {
     return 0;
   }
+}
+
+/** 流式 sha256（模型文件数百 MB，不整驻内存）。 */
+async function sha256File(path: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256');
+    const rs = createReadStream(path);
+    rs.on('data', (chunk) => hash.update(chunk));
+    rs.on('error', reject);
+    rs.on('end', () => resolve(hash.digest('hex')));
+  });
 }
 
 interface DownloadResult {
@@ -359,21 +372,36 @@ export class LocalAsrInstaller {
 
     if (job.target === 'model' || job.target === 'all') {
       const modelPath = join(managed.modelDir, preset.file);
-      if (!existsSync(modelPath)) {
-        this.patch({ resource: preset.label, phase: 'downloading', received: 0, total: null });
+      // 落位校验（自愈）：存在但尺寸/哈希与 LFS 钉扎值不符 → 重下。
+      // 历史版本 1MB 地板校验放过过的坏文件（≥1MB 截断件）由此清除。
+      const isHealthy = async (): Promise<boolean> => {
+        if (!existsSync(modelPath)) return false;
+        if (fileSize(modelPath) !== preset.bytes) return false;
+        return (await sha256File(modelPath)) === preset.sha256;
+      };
+      if (!(await isHealthy())) {
+        this.patch({ resource: preset.label, phase: 'downloading', received: 0, total: preset.bytes });
         const partial = `${modelPath}${PART_SUFFIX}`;
         const done = await downloadFirst(modelDownloadUrls(preset), modelPath, (r, t) => this.progress(r, t), signal);
         this.patch({ phase: 'verifying', message: '校验文件…' });
         const bytes = fileSize(partial);
-        if (bytes < 1024 * 1024) throw new Error(`模型文件不完整（${bytes} 字节）`);
+        if (bytes !== preset.bytes) {
+          rmSync(partial, { force: true });
+          throw new Error(`模型校验失败：尺寸 ${bytes} ≠ 预期 ${preset.bytes}，请重试`);
+        }
+        const hash = await sha256File(partial);
+        if (hash !== preset.sha256) {
+          rmSync(partial, { force: true });
+          throw new Error('模型校验失败：sha256 不符（下载不完整或镜像损坏），请重试');
+        }
         renameSync(partial, modelPath);
         result.modelPath = modelPath;
-        result.integrity = 'size';
+        result.integrity = 'sha256';
         this.options.logger?.(`model downloaded from ${done.url} (${bytes} bytes)`);
       }
       if (!('modelPath' in result)) {
         result.modelPath = modelPath;
-        result.integrity = 'size';
+        result.integrity = 'sha256';
       }
     }
 

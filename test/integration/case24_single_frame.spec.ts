@@ -16,9 +16,14 @@ describe('case24: 单帧视频可见性', () => {
     const c1 = await runStreamCallFixture('case24_single_frame.mp4', 'case24', {});
     expect(c1.telemetry.stopReason).toBe('end_of_stream');
     expect(c1.hintLines.join('\n')).toContain('timestamps_ms=[0]');
+    // 0.4.3 宣称「首访放行解码」但 probePtsIndex 对 [0,0] 窗口返回空索引、
+    // ffmpeg 从未 spawn（0.4.4 审计 P3-1）。索引终点外扩后本断言守住
+    // 「解码真实发生」与「游标越界」两半兑现。
+    expect(c1.telemetry.framesDecoded).toBeGreaterThanOrEqual(1);
     const c2 = await runStreamCallFixture('case24_single_frame.mp4', 'case24', {});
     expect(c2.packets.length).toBe(0);
     expect(c2.telemetry.stopReason).toBe('end_of_stream');
+    expect(c2.telemetry.framesDecoded).toBe(0);
   }, 120_000);
 
   it('timestamps 通道对同一视频照常可检视（两通道口径一致）', async () => {

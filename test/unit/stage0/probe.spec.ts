@@ -9,6 +9,7 @@ import { buildProbeResult, extractRotation, normalizeRotation, probeVideo, type 
 import { runDeterministicInspection, resolveTargets } from '../../../src/stage3/deterministicRouter.js';
 import { estimateLastPtsMs, parseRational, secondsToMs } from '../../../src/utils/pts.js';
 import { resolveBinPaths } from '../../../src/utils/ffmpegBin.js';
+import { fixturePath } from '../../integration/helpers.js';
 
 const bins = resolveBinPaths();
 
@@ -223,4 +224,14 @@ describe('probe 元数据完整性（case 18 前置，e2e）', () => {
       expect((error as { code?: string }).code).toBe('PFSTREAM_PROBE_NO_VIDEO');
     }
   });
+});
+
+describe('probeVideo 取消透传（P2-3 修复回归）', () => {
+  it('已中止 signal → PFSTREAM_EXEC_ABORT 如实透传（不被改码/吞掉）', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      probeVideo(fixturePath('case01_base.mp4'), { ffprobePath: 'ffprobe', signal: controller.signal }),
+    ).rejects.toMatchObject({ code: 'PFSTREAM_EXEC_ABORT' });
+  }, 60_000);
 });

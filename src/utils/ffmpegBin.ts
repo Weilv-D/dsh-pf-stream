@@ -57,7 +57,13 @@ export function resolveBinPaths(
   const homeToolDirs = [join(home, '.dsh', 'tools', 'ffmpeg', 'bin'), join(home, '.dsh', 'bin')];
 
   const resolveTool = (tool: 'ffmpeg' | 'ffprobe', configured?: string): string => {
-    const fromConfig = configured !== undefined && configured !== '' && isFile(configured) ? configured : undefined;
+    // 配置路径与 env 同口径的后缀宽容：Windows 下用户常配 `C:	oolsfmpegfmpeg`
+    // （无 .exe），只做原样探测会静默降级到 env/home/PATH，无任何诊断。
+    const configCandidates =
+      configured !== undefined && configured !== ''
+        ? [configured, ...(EXE && isAbsolute(configured) ? [`${configured}${EXE}`] : [])]
+        : [];
+    const fromConfig = configCandidates.find(isFile);
     return (
       fromConfig ??
       resolveFromEnvValue(envDirect, tool) ??
