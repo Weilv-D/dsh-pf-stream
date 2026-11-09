@@ -107,15 +107,20 @@ export interface ModelPreset {
   approxBytes: number;
 }
 
-/** whisper.cpp v1.7.6 对应 commit（模型 LFS 路径钉扎锚点）。 */
-export const WHISPER_CPP_COMMIT = 'a8d002cfd879315632a579e73f0148d06959de36';
+/**
+ * Hugging Face 模型仓库 `ggerganov/whisper.cpp` 的 commit 锚点（模型 LFS 路径
+ * 钉扎用）。注意：这是 HF 仓库自己的 commit（2024-10 后未变），不是 GitHub
+ * whisper.cpp 的 tag commit——两者是不同仓库（复核时实证：GitHub tag sha 在
+ * HF 上 404）。引擎 zip 仍走 GitHub Releases 的 v1.7.6 tag（那才是 GitHub 侧）。
+ */
+export const MODEL_REPO_COMMIT = '5359861c739e955e79d9a303bcbc70fb988958b1';
 
 export const MODEL_PRESETS: readonly ModelPreset[] = [
   {
     id: 'base-q5_1',
     label: '快速（base，约 60MB）',
     file: 'ggml-base-q5_1.bin',
-    path: `ggerganov/whisper.cpp/resolve/${WHISPER_CPP_COMMIT}/ggml-base-q5_1.bin`,
+    path: `ggerganov/whisper.cpp/resolve/${MODEL_REPO_COMMIT}/ggml-base-q5_1.bin`,
     bytes: 59707625,
     sha256: '422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898',
     approxBytes: 60 * 1024 * 1024,
@@ -124,7 +129,7 @@ export const MODEL_PRESETS: readonly ModelPreset[] = [
     id: 'small-q5_1',
     label: '推荐（small，约 190MB）',
     file: 'ggml-small-q5_1.bin',
-    path: `ggerganov/whisper.cpp/resolve/${WHISPER_CPP_COMMIT}/ggml-small-q5_1.bin`,
+    path: `ggerganov/whisper.cpp/resolve/${MODEL_REPO_COMMIT}/ggml-small-q5_1.bin`,
     bytes: 190085487,
     sha256: 'ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb',
     approxBytes: 190 * 1024 * 1024,
@@ -133,7 +138,7 @@ export const MODEL_PRESETS: readonly ModelPreset[] = [
     id: 'medium-q5_0',
     label: '更准（medium，约 540MB）',
     file: 'ggml-medium-q5_0.bin',
-    path: `ggerganov/whisper.cpp/resolve/${WHISPER_CPP_COMMIT}/ggml-medium-q5_0.bin`,
+    path: `ggerganov/whisper.cpp/resolve/${MODEL_REPO_COMMIT}/ggml-medium-q5_0.bin`,
     bytes: 539212467,
     sha256: '19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f',
     approxBytes: 540 * 1024 * 1024,

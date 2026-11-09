@@ -122,13 +122,13 @@ export class SchmittMachine {
               effects.push('switch_motion_void');
             }
             this.toMotion(ptsMs, effects);
-        } else if (ptsMs - this.switchStaticSincePtsMs >= th.switchStaticMs) {
-          this.switchStaticSincePtsMs = null;
-          // 观察窗到期：无条件发出发射请求，pending 保留（发射决策需要
-          // fSwitchImage 状态——采样器侧才知道，规格《三》case9：黑场顺延
-          // 到非黑帧或 300ms 兜底帧后发射，pending 由发射/顺延捕获方消费）。
-          effects.push('switch_static_emit');
-        }
+          } else if (ptsMs - this.switchStaticSincePtsMs >= th.switchStaticMs) {
+            this.switchStaticSincePtsMs = null;
+            // 观察窗到期：无条件发出发射请求，pending 保留（发射决策需要
+            // fSwitchImage 状态——采样器侧才知道，规格《三》case9：黑场顺延
+            // 到非黑帧或 300ms 兜底帧后发射，pending 由发射/顺延捕获方消费）。
+            effects.push('switch_static_emit');
+          }
           // 合并窗在 SWITCH 场景不存在
           if (this.mergeStartPtsMs !== null) this.mergeStartPtsMs = null;
           return { state: this.state, effects };

@@ -204,13 +204,17 @@ export async function transcribeWindow(
     // 覆盖承诺：缺口按缝合范围尝试过转写即视为已覆盖——island 切块 provider
     // （basic/host）的块只覆盖语音岛，岛间静音区若不记覆盖会每轮重复请求
     // 静音区、永不收敛。段仍按块记录（重叠区间由 mergeInterval 合并）。
-    for (const range of gaps) {
-      intervals = mergeInterval(intervals, {
-        startMs: range[0],
-        endMs: range[1],
-        source: 'asr',
-        segments: [],
-      });
+    // 仅全部块成功时生效：有失败块时其区间不得标记覆盖——失败区间保持
+    // 可重试（成功块的范围已由上方 outcomes 循环单独落缓存）。
+    if (result.failed === 0) {
+      for (const range of gaps) {
+        intervals = mergeInterval(intervals, {
+          startMs: range[0],
+          endMs: range[1],
+          source: 'asr',
+          segments: [],
+        });
+      }
     }
     renumberSegmentsGlobally(intervals);
     await writeTranscriptCache(options.cacheDir, fingerprint, intervals).catch(() => undefined);

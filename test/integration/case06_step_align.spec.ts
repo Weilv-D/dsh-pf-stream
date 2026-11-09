@@ -30,8 +30,9 @@ describe('用例 6：等效 30fps 步长对齐', () => {
     const p24 = countP(r24);
     const p60 = countP(r60);
     expect(p24).toBeGreaterThanOrEqual(3);
-    // 容差 ±2（原 ±1）：0.4.4 起首帧纳入步进（原 pts=0 首帧被步长门哨兵误吞）
-    // 且索引终点含末帧——两条帧率支路各多出边界单元，等效性本身不变。
+    // 容差 ±2（原 ±1）：P2-5 末帧纳入消费后尾部边界单元在两条帧率支路上
+    // 量化不同——已发 21/20（差 1）+ 游标待发尾量 3/2（差 1），总差 2；
+    // 每秒采出率等效不变（实测口径：packets 内 P + pendingPUnits）。
     expect(Math.abs(p24 - p60)).toBeLessThanOrEqual(2);
     expectPacketLegal(r24);
     expectPacketLegal(r60);
@@ -42,7 +43,6 @@ describe('用例 6：等效 30fps 步长对齐', () => {
     const pts24 = collectPPts(r24);
     const pts60 = collectPPts(r60);
     expect(pts24.length).toBeGreaterThan(0);
-    // 容差 ±2（原 ±1）：首帧纳入步进与索引末帧纳入的边界单元（同上）。
     expect(Math.abs(pts24.length - pts60.length)).toBeLessThanOrEqual(2);
     const n = Math.min(pts24.length, pts60.length);
     let aligned = 0;

@@ -22,10 +22,13 @@ import {
   type PrecheckResult,
 } from '../stage6/precheck.js';
 import { mergeSessionIntent, sessionIntentChanged } from '../stage5/intent.js';
-import { fingerprintOf, getSessionState, getVideoSlot, peekSessionState } from '../session/state.js';
 import {
   exportSessionSnapshot,
+  fingerprintOf,
+  getSessionState,
+  getVideoSlot,
   importSessionSnapshot,
+  peekSessionState,
   setMemorySession,
 } from '../session/state.js';
 import {
