@@ -83,6 +83,8 @@ Uniform overview (one frame every 2 seconds):
 
 - **Intent persistence**: `mode`, `focus`, `roi_hint`, and `full_frame` merge field-by-field across calls; `reset: true` clears first, then merges this call's fields.
 - **Cursor resume**: a repeated streaming call on the same video resumes from the last consumed position; at the stream end `telemetry.stopReason` is `end_of_stream`.
+- **Failed delivery rolls back**: when attachment delivery fails (e.g. host storage error), the whole in-memory advance of that call is rolled back — the next call re-consumes the same window, so failed calls leave no partial state.
+- **Byte-water truncation**: when encoded request bytes exceed `maxRequestBytes` (default 56 MiB), output is truncated in the order old cold refs → old hot strips → incremental tail; dropped incremental packets come with an actionable hint (time range + `pts_window` re-watch guidance) and are never re-delivered as cold refs.
 - **Session identity**: taken from the host call session ID; when absent, calls merge into the `default` session.
 - **Concurrency**: calls in one session execute serially in arrival order.
 - **Two-level history**: the hot zone (last 2 packets) reuses full strips; the cold zone keeps up to 4 anchor-only F carriers (672², 274 tokens).
